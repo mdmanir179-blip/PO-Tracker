@@ -1,0 +1,307 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'bizdev06.tbc@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/employees/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    function isRegisteredEmployee() {
+      return isVerifiedUser() && exists(/databases/$(database)/documents/employees/$(request.auth.uid));
+    }
+
+    function isValidEmployeeProfile(data) {
+      return data.keys().hasAll(['uid', 'employeeName', 'employeeId', 'role', 'spreadsheetId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'employeeName', 'employeeId', 'role', 'spreadsheetId', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uid == request.auth.uid &&
+        data.employeeName is string && data.employeeName.size() >= 2 && data.employeeName.size() <= 100 &&
+        data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 50 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.role is string && data.role.size() <= 20 && data.role in ['admin', 'backoffice', 'warehouse'] &&
+        data.spreadsheetId is string && data.spreadsheetId.size() <= 128 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPurchaseOrder(data) {
+      return data.keys().hasAll([
+          'poNumber', 'orderDate', 'warehouseName', 'itemId', 'itemName',
+          'totalQty', 'invoiceNo', 'shipDate', 'appointmentId', 'appointmentDate',
+          'so', 'status', 'noOfBoxes', 'boxDimensions', 'logisticsPortal',
+          'pickupTrackingId', 'puc', 'asn', 'clearBagNo', 'comment',
+          'pickupStatus', 'workflowStage', 'inwardStatus', 'grnNumber',
+          'grnDnSummary', 'hasDn', 'orgScope',
+          'createdByUid', 'createdByName', 'createdByEmpId',
+          'updatedByUid', 'updatedByName', 'updatedByEmpId',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'poNumber', 'orderDate', 'warehouseName', 'itemId', 'itemName',
+          'totalQty', 'invoiceNo', 'shipDate', 'appointmentId', 'appointmentDate',
+          'so', 'status', 'noOfBoxes', 'boxDimensions', 'logisticsPortal',
+          'pickupTrackingId', 'puc', 'asn', 'clearBagNo', 'comment',
+          'pickupStatus', 'workflowStage', 'inwardStatus', 'grnNumber',
+          'grnDnSummary', 'hasDn', 'orgScope',
+          'createdByUid', 'createdByName', 'createdByEmpId',
+          'updatedByUid', 'updatedByName', 'updatedByEmpId',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.poNumber is string && data.poNumber.size() >= 1 && data.poNumber.size() <= 60 &&
+        data.orderDate is string && data.orderDate.size() >= 1 && data.orderDate.size() <= 30 &&
+        data.warehouseName is string && data.warehouseName.size() >= 1 && data.warehouseName.size() <= 120 &&
+        data.itemId is string && data.itemId.size() >= 1 && data.itemId.size() <= 60 &&
+        data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 200 &&
+        data.totalQty is number && data.totalQty >= 0 &&
+        data.invoiceNo is string && data.invoiceNo.size() <= 80 &&
+        data.shipDate is string && data.shipDate.size() <= 30 &&
+        data.appointmentId is string && data.appointmentId.size() <= 80 &&
+        data.appointmentDate is string && data.appointmentDate.size() <= 30 &&
+        data.so is string && data.so.size() <= 80 &&
+        data.status is string && data.status.size() <= 60 &&
+        data.noOfBoxes is number && data.noOfBoxes >= 0 &&
+        data.boxDimensions is string && data.boxDimensions.size() <= 100 &&
+        data.logisticsPortal is string && data.logisticsPortal.size() <= 100 &&
+        data.pickupTrackingId is string && data.pickupTrackingId.size() <= 100 &&
+        data.puc is string && data.puc.size() <= 80 &&
+        data.asn is string && data.asn.size() <= 80 &&
+        data.clearBagNo is string && data.clearBagNo.size() <= 80 &&
+        data.comment is string && data.comment.size() <= 500 &&
+        data.pickupStatus is string && data.pickupStatus.size() <= 10 && data.pickupStatus in ['YES', 'NO'] &&
+        data.workflowStage is string && data.workflowStage.size() <= 20 && data.workflowStage in ['PO_ENTRY', 'IN_TRANSIT', 'GRN'] &&
+        data.inwardStatus is string && data.inwardStatus.size() <= 20 && data.inwardStatus in ['PENDING', 'SUCCESS'] &&
+        data.grnNumber is string && data.grnNumber.size() <= 80 &&
+        data.grnDnSummary is string && data.grnDnSummary.size() <= 500 &&
+        data.hasDn is bool &&
+        data.orgScope is string && data.orgScope.size() <= 30 && data.orgScope == 'instamart_ops' &&
+        data.createdByUid is string && data.createdByUid.size() <= 128 && data.createdByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 100 &&
+        data.createdByEmpId is string && data.createdByEmpId.size() >= 1 && data.createdByEmpId.size() <= 50 &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 && data.updatedByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.updatedByUid == request.auth.uid &&
+        data.updatedByName is string && data.updatedByName.size() >= 1 && data.updatedByName.size() <= 100 &&
+        data.updatedByEmpId is string && data.updatedByEmpId.size() >= 1 && data.updatedByEmpId.size() <= 50 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDnRecord(data) {
+      return data.keys().hasAll([
+          'dnDate', 'dnNumber', 'facilityName', 'parentPoDetails',
+          'dnSkuIdItemName', 'dnQty', 'whPocDetails', 'lrNo',
+          'reportFileName', 'reportFileType', 'reportFileSize', 'reportFileDataUrl',
+          'orgScope',
+          'createdByUid', 'createdByName', 'createdByEmpId',
+          'updatedByUid', 'updatedByName', 'updatedByEmpId',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'dnDate', 'dnNumber', 'facilityName', 'parentPoDetails',
+          'dnSkuIdItemName', 'dnQty', 'whPocDetails', 'lrNo',
+          'reportFileName', 'reportFileType', 'reportFileSize', 'reportFileDataUrl',
+          'orgScope',
+          'createdByUid', 'createdByName', 'createdByEmpId',
+          'updatedByUid', 'updatedByName', 'updatedByEmpId',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.dnDate is string && data.dnDate.size() >= 1 && data.dnDate.size() <= 30 &&
+        data.dnNumber is string && data.dnNumber.size() >= 1 && data.dnNumber.size() <= 80 &&
+        data.facilityName is string && data.facilityName.size() >= 1 && data.facilityName.size() <= 120 &&
+        data.parentPoDetails is string && data.parentPoDetails.size() >= 1 && data.parentPoDetails.size() <= 200 &&
+        data.dnSkuIdItemName is string && data.dnSkuIdItemName.size() >= 1 && data.dnSkuIdItemName.size() <= 250 &&
+        data.dnQty is number && data.dnQty >= 0 &&
+        data.whPocDetails is string && data.whPocDetails.size() <= 200 &&
+        data.lrNo is string && data.lrNo.size() <= 80 &&
+        data.reportFileName is string && data.reportFileName.size() <= 200 &&
+        data.reportFileType is string && data.reportFileType.size() <= 100 &&
+        data.reportFileSize is number && data.reportFileSize >= 0 && data.reportFileSize <= 10485760 &&
+        data.reportFileDataUrl is string && data.reportFileDataUrl.size() <= 750000 &&
+        data.orgScope is string && data.orgScope.size() <= 30 && data.orgScope == 'instamart_ops' &&
+        data.createdByUid is string && data.createdByUid.size() <= 128 && data.createdByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 100 &&
+        data.createdByEmpId is string && data.createdByEmpId.size() >= 1 && data.createdByEmpId.size() <= 50 &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 && data.updatedByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.updatedByUid == request.auth.uid &&
+        data.updatedByName is string && data.updatedByName.size() >= 1 && data.updatedByName.size() <= 100 &&
+        data.updatedByEmpId is string && data.updatedByEmpId.size() >= 1 && data.updatedByEmpId.size() <= 50 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidActivityLog(data) {
+      return data.keys().hasAll([
+          'action', 'module', 'referenceNo', 'details',
+          'employeeUid', 'employeeName', 'employeeId', 'employeeRole',
+          'orgScope', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'action', 'module', 'referenceNo', 'details',
+          'employeeUid', 'employeeName', 'employeeId', 'employeeRole',
+          'orgScope', 'createdAt'
+        ]) &&
+        data.action is string && data.action.size() >= 1 && data.action.size() <= 120 &&
+        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'GRN', 'DN_TRACKER', 'SHEETS_SYNC'] &&
+        data.referenceNo is string && data.referenceNo.size() <= 100 &&
+        data.details is string && data.details.size() <= 400 &&
+        data.employeeUid is string && data.employeeUid.size() <= 128 && data.employeeUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.employeeUid == request.auth.uid &&
+        data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 100 &&
+        data.employeeId is string && data.employeeId.size() >= 1 && data.employeeId.size() <= 50 &&
+        data.employeeRole is string && data.employeeRole.size() <= 20 && data.employeeRole in ['admin', 'backoffice', 'warehouse'] &&
+        data.orgScope is string && data.orgScope.size() <= 30 && data.orgScope == 'instamart_ops' &&
+        data.createdAt is timestamp;
+    }
+
+    match /employees/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidEmployeeProfile(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidEmployeeProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          isAdmin() ||
+          (
+            request.auth.uid == userId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['employeeName', 'employeeId', 'role', 'spreadsheetId', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    match /purchase_orders/{poId} {
+      allow get: if isSignedIn() && isValidId(poId) && existing().orgScope == 'instamart_ops';
+      allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
+      allow create: if isVerifiedUser() &&
+        isValidId(poId) &&
+        isValidPurchaseOrder(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isRegisteredEmployee();
+      allow update: if isVerifiedUser() &&
+        isValidId(poId) &&
+        isValidPurchaseOrder(incoming()) &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdByName == existing().createdByName &&
+        incoming().createdByEmpId == existing().createdByEmpId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isRegisteredEmployee() &&
+        (
+          isAdmin() ||
+          // Action 1: Editing PO while in PO_ENTRY stage (and optionally shifting to IN_TRANSIT when pickupStatus becomes YES)
+          (
+            existing().workflowStage == 'PO_ENTRY' &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'poNumber', 'orderDate', 'warehouseName', 'itemId', 'itemName',
+              'totalQty', 'invoiceNo', 'shipDate', 'appointmentId', 'appointmentDate',
+              'so', 'status', 'noOfBoxes', 'boxDimensions', 'logisticsPortal',
+              'pickupTrackingId', 'puc', 'asn', 'clearBagNo', 'comment',
+              'pickupStatus', 'workflowStage', 'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
+            ])
+          ) ||
+          // Action 2: In-Transit to GRN Inward transition (Employees cannot edit general PO details in IN_TRANSIT, only inward to GRN)
+          (
+            existing().workflowStage == 'IN_TRANSIT' &&
+            incoming().workflowStage == 'GRN' &&
+            incoming().inwardStatus == 'SUCCESS' &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'workflowStage', 'inwardStatus', 'status', 'grnNumber', 'grnDnSummary', 'hasDn',
+              'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
+            ])
+          ) ||
+          // Action 3: Updating GRN & DN details once in GRN stage
+          (
+            existing().workflowStage == 'GRN' &&
+            incoming().workflowStage == 'GRN' &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'grnNumber', 'grnDnSummary', 'hasDn', 'comment',
+              'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(poId);
+    }
+
+    match /dn_records/{dnId} {
+      allow get: if isSignedIn() && isValidId(dnId) && existing().orgScope == 'instamart_ops';
+      allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
+      allow create: if isVerifiedUser() &&
+        isValidId(dnId) &&
+        isValidDnRecord(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isRegisteredEmployee();
+      allow update: if isVerifiedUser() &&
+        isValidId(dnId) &&
+        isValidDnRecord(incoming()) &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdByName == existing().createdByName &&
+        incoming().createdByEmpId == existing().createdByEmpId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isRegisteredEmployee() &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'dnDate', 'dnNumber', 'facilityName', 'parentPoDetails',
+            'dnSkuIdItemName', 'dnQty', 'whPocDetails', 'lrNo',
+            'reportFileName', 'reportFileType', 'reportFileSize', 'reportFileDataUrl',
+            'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
+          ])
+        );
+      allow delete: if isAdmin() && isValidId(dnId);
+    }
+
+    match /activity_logs/{logId} {
+      allow get: if isSignedIn() && isValidId(logId) && existing().orgScope == 'instamart_ops';
+      allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
+      allow create: if isVerifiedUser() &&
+        isValidId(logId) &&
+        isValidActivityLog(incoming()) &&
+        incoming().createdAt == request.time &&
+        isRegisteredEmployee();
+      allow update, delete: if false;
+    }
+  }
+}

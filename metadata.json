@@ -1,0 +1,6 @@
+{
+  "name": "Instamart PO & DN Tracker",
+  "description": "Enterprise Instamart Purchase Order, In-Transit, GRN, and Discrepancy Note (DN) management system with real-time Google Sheets sync and role-based access control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

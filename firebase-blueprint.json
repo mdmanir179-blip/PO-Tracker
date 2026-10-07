@@ -1,0 +1,514 @@
+{
+  "entities": {
+    "EmployeeProfile": {
+      "title": "EmployeeProfile",
+      "description": "Public directory profile for employees containing non-PII work identity and role.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the employee"
+        },
+        "employeeName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100,
+          "description": "Full name of the employee"
+        },
+        "employeeId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 50,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Mandatory company Employee ID"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "backoffice", "warehouse"],
+          "maxLength": 20,
+          "description": "Team role of the employee"
+        },
+        "spreadsheetId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Optional linked Google Spreadsheet ID"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of profile creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile update"
+        }
+      },
+      "required": ["uid", "employeeName", "employeeId", "role", "createdAt", "updatedAt"]
+    },
+    "PurchaseOrder": {
+      "title": "PurchaseOrder",
+      "description": "Instamart Purchase Order tracking record across PO Entry, In Transit, and GRN workflow stages.",
+      "type": "object",
+      "properties": {
+        "poNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Purchase Order Number"
+        },
+        "orderDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30,
+          "description": "Order Date"
+        },
+        "warehouseName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Destination Instamart Warehouse Name"
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Item SKU / ID"
+        },
+        "itemName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Item Name"
+        },
+        "totalQty": {
+          "type": "number",
+          "description": "Total Quantity ordered"
+        },
+        "invoiceNo": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Invoice Number"
+        },
+        "shipDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Shipment Date"
+        },
+        "appointmentId": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Warehouse Appointment ID"
+        },
+        "appointmentDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Appointment Date"
+        },
+        "so": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Sales Order (SO) reference"
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "Current operational status"
+        },
+        "noOfBoxes": {
+          "type": "number",
+          "description": "Total number of boxes"
+        },
+        "boxDimensions": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Box dimensions (L x W x H)"
+        },
+        "logisticsPortal": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Logistics Portal / Carrier name"
+        },
+        "pickupTrackingId": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Pickup Tracking ID"
+        },
+        "puc": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "PUC Code / Number"
+        },
+        "asn": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Advance Shipping Notice (ASN)"
+        },
+        "clearBagNo": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Clear Bag Number"
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Additional comments or remarks"
+        },
+        "pickupStatus": {
+          "type": "string",
+          "enum": ["YES", "NO"],
+          "maxLength": 10,
+          "description": "Pickup Status: YES shifts record to In Transit"
+        },
+        "workflowStage": {
+          "type": "string",
+          "enum": ["PO_ENTRY", "IN_TRANSIT", "GRN"],
+          "maxLength": 20,
+          "description": "Current stage in the workflow pipeline"
+        },
+        "inwardStatus": {
+          "type": "string",
+          "enum": ["PENDING", "SUCCESS"],
+          "maxLength": 20,
+          "description": "Inward status; SUCCESS shifts record to GRN"
+        },
+        "grnNumber": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "GRN Number assigned upon inwarding"
+        },
+        "grnDnSummary": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Discrepancy Note summary recorded in GRN stage"
+        },
+        "hasDn": {
+          "type": "boolean",
+          "description": "Whether this GRN has any Discrepancy Note (DN)"
+        },
+        "orgScope": {
+          "type": "string",
+          "enum": ["instamart_ops"],
+          "maxLength": 30,
+          "description": "Organizational partition scope for secure list queries"
+        },
+        "createdByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the employee who created the PO"
+        },
+        "createdByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Name of the employee who created the PO"
+        },
+        "createdByEmpId": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Employee ID of the creator"
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the employee who last updated the PO"
+        },
+        "updatedByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Name of the employee who last updated the PO"
+        },
+        "updatedByEmpId": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Employee ID of the last updater"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "poNumber",
+        "orderDate",
+        "warehouseName",
+        "itemId",
+        "itemName",
+        "totalQty",
+        "invoiceNo",
+        "shipDate",
+        "appointmentId",
+        "appointmentDate",
+        "so",
+        "status",
+        "noOfBoxes",
+        "boxDimensions",
+        "logisticsPortal",
+        "pickupTrackingId",
+        "puc",
+        "asn",
+        "clearBagNo",
+        "comment",
+        "pickupStatus",
+        "workflowStage",
+        "inwardStatus",
+        "grnNumber",
+        "grnDnSummary",
+        "hasDn",
+        "orgScope",
+        "createdByUid",
+        "createdByName",
+        "createdByEmpId",
+        "updatedByUid",
+        "updatedByName",
+        "updatedByEmpId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DnRecord": {
+      "title": "DnRecord",
+      "description": "Instamart Discrepancy Note (DN) Tracker entry with uploaded file metadata and LR number.",
+      "type": "object",
+      "properties": {
+        "dnDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 30,
+          "description": "DN Date"
+        },
+        "dnNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Discrepancy Note Number"
+        },
+        "facilityName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Instamart Facility / Warehouse Name"
+        },
+        "parentPoDetails": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Parent PO Number & Details"
+        },
+        "dnSkuIdItemName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250,
+          "description": "DN SKU ID | Item Name"
+        },
+        "dnQty": {
+          "type": "number",
+          "description": "Discrepancy Note Quantity"
+        },
+        "whPocDetails": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Warehouse POC Name / Contact Details"
+        },
+        "lrNo": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "LR Number"
+        },
+        "reportFileName": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Uploaded DN report file name (PDF or spreadsheet)"
+        },
+        "reportFileType": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "MIME type of the uploaded report file"
+        },
+        "reportFileSize": {
+          "type": "number",
+          "description": "File size in bytes (max 10 MB)"
+        },
+        "reportFileDataUrl": {
+          "type": "string",
+          "maxLength": 750000,
+          "description": "Encoded preview/download payload or reference link for the report file"
+        },
+        "orgScope": {
+          "type": "string",
+          "enum": ["instamart_ops"],
+          "maxLength": 30,
+          "description": "Organizational partition scope for secure list queries"
+        },
+        "createdByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of employee who created the DN entry"
+        },
+        "createdByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Name of employee who created the DN entry"
+        },
+        "createdByEmpId": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Employee ID of creator"
+        },
+        "updatedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of employee who last updated the DN entry"
+        },
+        "updatedByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Name of employee who last updated the DN entry"
+        },
+        "updatedByEmpId": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Employee ID of last updater"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "dnDate",
+        "dnNumber",
+        "facilityName",
+        "parentPoDetails",
+        "dnSkuIdItemName",
+        "dnQty",
+        "whPocDetails",
+        "lrNo",
+        "reportFileName",
+        "reportFileType",
+        "reportFileSize",
+        "reportFileDataUrl",
+        "orgScope",
+        "createdByUid",
+        "createdByName",
+        "createdByEmpId",
+        "updatedByUid",
+        "updatedByName",
+        "updatedByEmpId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Audit log of every PO or DN creation and modification showing Employee Name, Employee ID, and Role for Admin visibility.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Action summary (e.g. Created PO, Shifted to In Transit, Updated DN)"
+        },
+        "module": {
+          "type": "string",
+          "enum": ["PO_ENTRY", "IN_TRANSIT", "GRN", "DN_TRACKER", "SHEETS_SYNC"],
+          "maxLength": 30,
+          "description": "System module where action occurred"
+        },
+        "referenceNo": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "PO Number or DN Number affected"
+        },
+        "details": {
+          "type": "string",
+          "maxLength": 400,
+          "description": "Human-readable audit details"
+        },
+        "employeeUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the acting employee"
+        },
+        "employeeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Employee Name displayed to Admin"
+        },
+        "employeeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "description": "Employee ID displayed to Admin"
+        },
+        "employeeRole": {
+          "type": "string",
+          "enum": ["admin", "backoffice", "warehouse"],
+          "maxLength": 20,
+          "description": "Role of the acting employee"
+        },
+        "orgScope": {
+          "type": "string",
+          "enum": ["instamart_ops"],
+          "maxLength": 30,
+          "description": "Organizational partition scope"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the activity"
+        }
+      },
+      "required": [
+        "action",
+        "module",
+        "referenceNo",
+        "details",
+        "employeeUid",
+        "employeeName",
+        "employeeId",
+        "employeeRole",
+        "orgScope",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/employees/{userId}": {
+      "schema": { "$ref": "#/entities/EmployeeProfile" },
+      "description": "Employee directory profiles containing Employee Name, Employee ID, and Role (Admin, Backoffice, Warehouse)."
+    },
+    "/purchase_orders/{poId}": {
+      "schema": { "$ref": "#/entities/PurchaseOrder" },
+      "description": "Master collection of Instamart Purchase Orders across PO Entry, In Transit, and GRN tabs."
+    },
+    "/dn_records/{dnId}": {
+      "schema": { "$ref": "#/entities/DnRecord" },
+      "description": "Instamart Discrepancy Note (DN) Tracker records."
+    },
+    "/activity_logs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Real-time audit trail for Admin showing which employee (Name & ID) created or updated data."
+    }
+  }
+}
