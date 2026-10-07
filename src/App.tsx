@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { User } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -33,10 +32,10 @@ import {
   initAuth,
   emailSignUp,
   emailSignIn,
-  googleSignIn,
   logout,
   handleFirestoreError,
   OperationType,
+  AppUser,
 } from './firebase';
 import {
   TeamRole,
@@ -77,7 +76,7 @@ export default function App() {
   });
 
   const [authReady, setAuthReady] = useState(false);
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<AppUser | null>(null);
   const [employeeProfile, setEmployeeProfile] = useState<EmployeeProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
@@ -297,20 +296,7 @@ export default function App() {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setIsSubmittingAuth(true);
-    setAuthError(null);
-    try {
-      const user = await googleSignIn();
-      setFirebaseUser(user);
-    } catch (err: any) {
-      setAuthError(err?.message || 'Google Sign-In failed.');
-    } finally {
-      setIsSubmittingAuth(false);
-    }
-  };
-
-  const handleCompleteGoogleProfile = async (data: {
+  const handleCompleteProfile = async (data: {
     employeeName: string;
     employeeId: string;
     role: TeamRole;
@@ -945,8 +931,7 @@ export default function App() {
         onToggleDarkMode={() => setDarkMode(!darkMode)}
         onEmailSignUp={handleEmailSignUp}
         onEmailSignIn={handleEmailSignIn}
-        onGoogleLogin={handleGoogleLogin}
-        onCompleteGoogleProfile={handleCompleteGoogleProfile}
+        onCompleteProfile={handleCompleteProfile}
         isSubmitting={isSubmittingAuth}
         authError={authError}
       />
