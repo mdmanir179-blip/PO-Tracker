@@ -171,7 +171,7 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
                 : 'New Instamart PO Entry (21 Point Checklist)'}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Setting Pickup Status to YES automatically shifts this PO to the In-Transit tab and syncs with Google Sheets.
+              Setting Pickup Status to YES automatically shifts this PO to the In-Transit tab.
             </p>
           </div>
           <button

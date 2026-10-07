@@ -3,6 +3,9 @@ import {
   getAuth,
   signInWithPopup,
   GoogleAuthProvider,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
   onAuthStateChanged,
   User,
 } from 'firebase/auth';
@@ -17,16 +20,8 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
-export const SCOPES = [
-  'https://www.googleapis.com/auth/spreadsheets',
-];
-
 const provider = new GoogleAuthProvider();
-SCOPES.forEach((scope) => provider.addScope(scope));
 provider.setCustomParameters({ prompt: 'select_account' });
-
-let isSigningIn = false;
-let cachedAccessToken: string | null = null;
 
 async function testConnection() {
   try {
@@ -92,46 +87,38 @@ export function handleFirestoreError(
 }
 
 export const initAuth = (
-  onAuthChange: (user: User | null, token: string | null) => void
+  onAuthChange: (user: User | null) => void
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
-    if (user) {
-      onAuthChange(user, cachedAccessToken);
-    } else {
-      cachedAccessToken = null;
-      onAuthChange(null, null);
-    }
+    onAuthChange(user);
   });
 };
 
-export const googleSignIn = async (): Promise<{
-  user: User;
-  accessToken: string;
-} | null> => {
-  try {
-    isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    const token = credential?.accessToken || '';
-    cachedAccessToken = token || null;
-    return { user: result.user, accessToken: token };
-  } catch (error) {
-    console.error('Sign in error:', error);
-    throw error;
-  } finally {
-    isSigningIn = false;
+export const emailSignUp = async (
+  email: string,
+  password: string,
+  displayName: string
+): Promise<User> => {
+  const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  if (displayName) {
+    await updateProfile(cred.user, { displayName: displayName.trim() });
   }
+  return cred.user;
 };
 
-export const getAccessToken = (): string | null => {
-  return cachedAccessToken;
+export const emailSignIn = async (
+  email: string,
+  password: string
+): Promise<User> => {
+  const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return cred.user;
 };
 
-export const setAccessToken = (token: string | null) => {
-  cachedAccessToken = token;
+export const googleSignIn = async (): Promise<User> => {
+  const result = await signInWithPopup(auth, provider);
+  return result.user;
 };
 
 export const logout = async () => {
   await auth.signOut();
-  cachedAccessToken = null;
 };

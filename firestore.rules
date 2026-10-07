@@ -21,24 +21,20 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
-    }
-
     function isBootstrappedAdmin() {
-      return isVerifiedUser() && request.auth.token.email == 'bizdev06.tbc@gmail.com';
+      return isSignedIn() && request.auth.token.email == 'bizdev06.tbc@gmail.com' && request.auth.token.email_verified == true;
     }
 
     function isAdmin() {
       return isBootstrappedAdmin() || (
-        isVerifiedUser() &&
+        isSignedIn() &&
         exists(/databases/$(database)/documents/employees/$(request.auth.uid)) &&
         get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.role == 'admin'
       );
     }
 
     function isRegisteredEmployee() {
-      return isVerifiedUser() && exists(/databases/$(database)/documents/employees/$(request.auth.uid));
+      return isSignedIn() && exists(/databases/$(database)/documents/employees/$(request.auth.uid));
     }
 
     function isValidEmployeeProfile(data) {
@@ -185,13 +181,13 @@ service cloud.firestore {
     match /employees/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
       allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
-      allow create: if isVerifiedUser() &&
+      allow create: if isSignedIn() &&
         isValidId(userId) &&
         request.auth.uid == userId &&
         isValidEmployeeProfile(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isVerifiedUser() &&
+      allow update: if isSignedIn() &&
         isValidId(userId) &&
         isValidEmployeeProfile(incoming()) &&
         incoming().uid == existing().uid &&
@@ -210,14 +206,14 @@ service cloud.firestore {
     match /purchase_orders/{poId} {
       allow get: if isSignedIn() && isValidId(poId) && existing().orgScope == 'instamart_ops';
       allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
-      allow create: if isVerifiedUser() &&
+      allow create: if isSignedIn() &&
         isValidId(poId) &&
         isValidPurchaseOrder(incoming()) &&
         incoming().createdByUid == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         isRegisteredEmployee();
-      allow update: if isVerifiedUser() &&
+      allow update: if isSignedIn() &&
         isValidId(poId) &&
         isValidPurchaseOrder(incoming()) &&
         incoming().createdByUid == existing().createdByUid &&
@@ -228,7 +224,6 @@ service cloud.firestore {
         isRegisteredEmployee() &&
         (
           isAdmin() ||
-          // Action 1: Editing PO while in PO_ENTRY stage (and optionally shifting to IN_TRANSIT when pickupStatus becomes YES)
           (
             existing().workflowStage == 'PO_ENTRY' &&
             incoming().diff(existing()).affectedKeys().hasOnly([
@@ -239,7 +234,6 @@ service cloud.firestore {
               'pickupStatus', 'workflowStage', 'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
             ])
           ) ||
-          // Action 2: In-Transit to GRN Inward transition (Employees cannot edit general PO details in IN_TRANSIT, only inward to GRN)
           (
             existing().workflowStage == 'IN_TRANSIT' &&
             incoming().workflowStage == 'GRN' &&
@@ -249,7 +243,6 @@ service cloud.firestore {
               'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
             ])
           ) ||
-          // Action 3: Updating GRN & DN details once in GRN stage
           (
             existing().workflowStage == 'GRN' &&
             incoming().workflowStage == 'GRN' &&
@@ -265,14 +258,14 @@ service cloud.firestore {
     match /dn_records/{dnId} {
       allow get: if isSignedIn() && isValidId(dnId) && existing().orgScope == 'instamart_ops';
       allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
-      allow create: if isVerifiedUser() &&
+      allow create: if isSignedIn() &&
         isValidId(dnId) &&
         isValidDnRecord(incoming()) &&
         incoming().createdByUid == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         isRegisteredEmployee();
-      allow update: if isVerifiedUser() &&
+      allow update: if isSignedIn() &&
         isValidId(dnId) &&
         isValidDnRecord(incoming()) &&
         incoming().createdByUid == existing().createdByUid &&
@@ -296,7 +289,7 @@ service cloud.firestore {
     match /activity_logs/{logId} {
       allow get: if isSignedIn() && isValidId(logId) && existing().orgScope == 'instamart_ops';
       allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
-      allow create: if isVerifiedUser() &&
+      allow create: if isSignedIn() &&
         isValidId(logId) &&
         isValidActivityLog(incoming()) &&
         incoming().createdAt == request.time &&

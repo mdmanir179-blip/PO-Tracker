@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { User } from 'firebase/auth';
 import {
   collection,
@@ -18,27 +18,23 @@ import {
   FileSpreadsheet,
   FileText,
   Download,
+  Upload,
   Sun,
   Moon,
   LogOut,
   Truck,
   PackageCheck,
-  AlertTriangle,
   Edit3,
   Lock,
   Trash2,
-  CheckCircle2,
-  ClipboardList,
-  ShieldAlert,
-  ExternalLink,
-  RefreshCw,
 } from 'lucide-react';
 import {
   db,
   initAuth,
+  emailSignUp,
+  emailSignIn,
   googleSignIn,
   logout,
-  getAccessToken,
   handleFirestoreError,
   OperationType,
 } from './firebase';
@@ -54,13 +50,12 @@ import { AuthScreen } from './components/AuthScreen';
 import { PoFormModal, PoFormValues } from './components/PoFormModal';
 import { DnFormModal, DnFormValues } from './components/DnFormModal';
 import { GrnUpdateModal } from './components/GrnUpdateModal';
-import { SheetsSetupModal } from './components/SheetsSetupModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { PerformanceDashboard } from './components/PerformanceDashboard';
 import {
-  createInstamartSpreadsheet,
-  syncAllTabsToGoogleSheet,
-} from './services/googleSheets';
-import {
+  exportMasterWorkbookToExcel,
+  parseExcelForPoEntries,
+  parseExcelForDnEntries,
   exportPoListToExcel,
   exportPoListToCsv,
   exportPoListToPdf,
@@ -83,7 +78,6 @@ export default function App() {
 
   const [authReady, setAuthReady] = useState(false);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [googleToken, setGoogleToken] = useState<string | null>(null);
   const [employeeProfile, setEmployeeProfile] = useState<EmployeeProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(false);
   const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
@@ -108,8 +102,9 @@ export default function App() {
   const [grnTargetPo, setGrnTargetPo] = useState<PurchaseOrder | null>(null);
   const [grnModalMode, setGrnModalMode] = useState<'INWARD_TO_GRN' | 'UPDATE_GRN_DN'>('INWARD_TO_GRN');
 
-  const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [excelStatus, setExcelStatus] = useState<string | null>(null);
+  const poExcelInputRef = useRef<HTMLInputElement>(null);
+  const dnExcelInputRef = useRef<HTMLInputElement>(null);
 
   const [confirmState, setConfirmState] = useState<{
     isOpen: boolean;
@@ -131,9 +126,8 @@ export default function App() {
 
   // Listen to Firebase Auth state
   useEffect(() => {
-    const unsubscribe = initAuth(async (user, token) => {
+    const unsubscribe = initAuth(async (user) => {
       setFirebaseUser(user);
-      setGoogleToken(token || getAccessToken());
       if (user) {
         setIsLoadingProfile(true);
         try {
@@ -244,24 +238,62 @@ export default function App() {
     }
   };
 
-  // Auto-sync to Google Sheets whenever data changes and a spreadsheetId + token exist
-  const triggerAutoGoogleSheetSync = async (
-    updatedPos: PurchaseOrder[],
-    updatedDns: DnRecord[],
-    explicitSpreadsheetId?: string
-  ) => {
-    const targetSheetId = explicitSpreadsheetId ?? employeeProfile?.spreadsheetId;
-    const token = getAccessToken() || googleToken;
-    if (!targetSheetId || !token) return;
-
+  // Sign Up with Email, Password, Employee Name, Employee ID, and Role
+  const handleEmailSignUp = async (data: {
+    employeeName: string;
+    employeeId: string;
+    email: string;
+    password: string;
+    role: TeamRole;
+  }) => {
+    setIsSubmittingAuth(true);
+    setAuthError(null);
     try {
-      setSyncStatus('Syncing to Google Sheets...');
-      await syncAllTabsToGoogleSheet(targetSheetId, updatedPos, updatedDns);
-      setSyncStatus('Synced with Google Sheets');
-      setTimeout(() => setSyncStatus(null), 4000);
+      const user = await emailSignUp(data.email, data.password, data.employeeName);
+      setFirebaseUser(user);
+      const docRef = doc(db, 'employees', user.uid);
+      await setDoc(docRef, {
+        uid: user.uid,
+        employeeName: data.employeeName.slice(0, 100),
+        employeeId: data.employeeId.slice(0, 50),
+        role: data.role,
+        spreadsheetId: '',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      setEmployeeProfile({
+        uid: user.uid,
+        employeeName: data.employeeName.slice(0, 100),
+        employeeId: data.employeeId.slice(0, 50),
+        role: data.role,
+        spreadsheetId: '',
+      });
     } catch (err: any) {
-      console.error('Auto Google Sheet sync error:', err);
-      setSyncStatus('Google Sheet sync pending authorization');
+      setAuthError(err?.message || 'Sign Up failed.');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
+  };
+
+  // Sign In with Email and Password
+  const handleEmailSignIn = async (data: {
+    email: string;
+    password: string;
+  }) => {
+    setIsSubmittingAuth(true);
+    setAuthError(null);
+    try {
+      const user = await emailSignIn(data.email, data.password);
+      setFirebaseUser(user);
+      const docRef = doc(db, 'employees', user.uid);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        setEmployeeProfile(snap.data() as EmployeeProfile);
+      }
+    } catch (err: any) {
+      setAuthError(err?.message || 'Login failed. Please check your Email ID and Password.');
+    } finally {
+      setIsSubmittingAuth(false);
     }
   };
 
@@ -269,11 +301,8 @@ export default function App() {
     setIsSubmittingAuth(true);
     setAuthError(null);
     try {
-      const res = await googleSignIn();
-      if (res) {
-        setFirebaseUser(res.user);
-        setGoogleToken(res.accessToken);
-      }
+      const user = await googleSignIn();
+      setFirebaseUser(user);
     } catch (err: any) {
       setAuthError(err?.message || 'Google Sign-In failed.');
     } finally {
@@ -281,30 +310,23 @@ export default function App() {
     }
   };
 
-  const handleCompleteSignupOrProfile = async (data: {
+  const handleCompleteGoogleProfile = async (data: {
     employeeName: string;
     employeeId: string;
     role: TeamRole;
   }) => {
-    if (!firebaseUser) {
-      setAuthError('Please sign in with Google first.');
-      return;
-    }
+    if (!firebaseUser) return;
     setIsSubmittingAuth(true);
     setAuthError(null);
     const docRef = doc(db, 'employees', firebaseUser.uid);
     try {
       const existingSnap = await getDoc(docRef);
-      const spreadsheetId = existingSnap.exists()
-        ? (existingSnap.data() as EmployeeProfile).spreadsheetId || ''
-        : '';
-
       if (existingSnap.exists()) {
         await updateDoc(docRef, {
           employeeName: data.employeeName.slice(0, 100),
           employeeId: data.employeeId.slice(0, 50),
           role: data.role,
-          spreadsheetId,
+          spreadsheetId: '',
           updatedAt: serverTimestamp(),
         });
       } else {
@@ -318,13 +340,12 @@ export default function App() {
           updatedAt: serverTimestamp(),
         });
       }
-
       setEmployeeProfile({
         uid: firebaseUser.uid,
         employeeName: data.employeeName.slice(0, 100),
         employeeId: data.employeeId.slice(0, 50),
         role: data.role,
-        spreadsheetId,
+        spreadsheetId: '',
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `employees/${firebaseUser.uid}`);
@@ -392,11 +413,6 @@ export default function App() {
           }`
         );
 
-        const nextPos = purchaseOrders.map((p) =>
-          p.id === editingPo.id ? ({ ...p, ...updatePayload } as PurchaseOrder) : p
-        );
-        await triggerAutoGoogleSheetSync(nextPos, dnRecords);
-
         if (shiftedToTransit) {
           setActiveTab('IN_TRANSIT');
         }
@@ -457,15 +473,209 @@ export default function App() {
           `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created PO ${values.poNumber} for ${values.warehouseName}.`
         );
 
-        const nextPos = [{ id: poId, ...newPoDoc }, ...purchaseOrders];
-        await triggerAutoGoogleSheetSync(nextPos, dnRecords);
-
         if (values.pickupStatus === 'YES') {
           setActiveTab('IN_TRANSIT');
         }
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `purchase_orders/${poId}`);
       }
+    }
+  };
+
+  // Bulk Import / Update POs from Normal Excel File (.xlsx / .xls / .csv)
+  const handlePoExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !firebaseUser || !employeeProfile) return;
+    e.target.value = '';
+
+    try {
+      setExcelStatus('Importing PO data from Excel file...');
+      const rows = await parseExcelForPoEntries(file);
+      let createdCount = 0;
+      let updatedCount = 0;
+
+      for (const item of rows) {
+        const existingMatch = purchaseOrders.find(
+          (p) => p.poNumber.toLowerCase() === item.poNumber.toLowerCase()
+        );
+
+        if (existingMatch) {
+          // Respect In-Transit Lock for non-admins
+          if (existingMatch.workflowStage === 'IN_TRANSIT' && employeeProfile.role !== 'admin') {
+            continue;
+          }
+          const nextStage =
+            item.pickupStatus === 'YES'
+              ? 'IN_TRANSIT'
+              : existingMatch.workflowStage;
+
+          await updateDoc(doc(db, 'purchase_orders', existingMatch.id), {
+            poNumber: item.poNumber.slice(0, 60),
+            orderDate: item.orderDate.slice(0, 30),
+            warehouseName: item.warehouseName.slice(0, 120),
+            itemId: item.itemId.slice(0, 60),
+            itemName: item.itemName.slice(0, 200),
+            totalQty: Number(item.totalQty) || 0,
+            invoiceNo: item.invoiceNo.slice(0, 80),
+            shipDate: item.shipDate.slice(0, 30),
+            appointmentId: item.appointmentId.slice(0, 80),
+            appointmentDate: item.appointmentDate.slice(0, 30),
+            so: item.so.slice(0, 80),
+            status:
+              item.pickupStatus === 'YES' && existingMatch.workflowStage === 'PO_ENTRY'
+                ? 'In Transit'
+                : item.status.slice(0, 60),
+            noOfBoxes: Number(item.noOfBoxes) || 0,
+            boxDimensions: item.boxDimensions.slice(0, 100),
+            logisticsPortal: item.logisticsPortal.slice(0, 100),
+            pickupTrackingId: item.pickupTrackingId.slice(0, 100),
+            puc: item.puc.slice(0, 80),
+            asn: item.asn.slice(0, 80),
+            clearBagNo: item.clearBagNo.slice(0, 80),
+            comment: item.comment.slice(0, 500),
+            pickupStatus: item.pickupStatus,
+            workflowStage: nextStage,
+            updatedByUid: firebaseUser.uid,
+            updatedByName: employeeProfile.employeeName.slice(0, 100),
+            updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+            updatedAt: serverTimestamp(),
+          });
+          updatedCount++;
+        } else {
+          const poId = generateSafeId('po');
+          await setDoc(doc(db, 'purchase_orders', poId), {
+            poNumber: item.poNumber.slice(0, 60),
+            orderDate: item.orderDate.slice(0, 30),
+            warehouseName: item.warehouseName.slice(0, 120),
+            itemId: item.itemId.slice(0, 60),
+            itemName: item.itemName.slice(0, 200),
+            totalQty: Number(item.totalQty) || 0,
+            invoiceNo: item.invoiceNo.slice(0, 80),
+            shipDate: item.shipDate.slice(0, 30),
+            appointmentId: item.appointmentId.slice(0, 80),
+            appointmentDate: item.appointmentDate.slice(0, 30),
+            so: item.so.slice(0, 80),
+            status: item.pickupStatus === 'YES' ? 'In Transit' : item.status.slice(0, 60),
+            noOfBoxes: Number(item.noOfBoxes) || 0,
+            boxDimensions: item.boxDimensions.slice(0, 100),
+            logisticsPortal: item.logisticsPortal.slice(0, 100),
+            pickupTrackingId: item.pickupTrackingId.slice(0, 100),
+            puc: item.puc.slice(0, 80),
+            asn: item.asn.slice(0, 80),
+            clearBagNo: item.clearBagNo.slice(0, 80),
+            comment: item.comment.slice(0, 500),
+            pickupStatus: item.pickupStatus,
+            workflowStage: item.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PO_ENTRY',
+            inwardStatus: 'PENDING',
+            grnNumber: '',
+            grnDnSummary: '',
+            hasDn: false,
+            orgScope: 'instamart_ops',
+            createdByUid: firebaseUser.uid,
+            createdByName: employeeProfile.employeeName.slice(0, 100),
+            createdByEmpId: employeeProfile.employeeId.slice(0, 50),
+            updatedByUid: firebaseUser.uid,
+            updatedByName: employeeProfile.employeeName.slice(0, 100),
+            updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          createdCount++;
+        }
+      }
+
+      await recordActivity(
+        'Excel File PO Import / Update',
+        'PO_ENTRY',
+        file.name,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) imported Excel file "${file.name}" (${createdCount} new POs, ${updatedCount} updated POs).`
+      );
+      setExcelStatus(`Excel Imported: ${createdCount} new, ${updatedCount} updated`);
+      setTimeout(() => setExcelStatus(null), 5000);
+    } catch (err: any) {
+      console.error('Excel import error:', err);
+      setExcelStatus('Failed to read Excel file. Ensure column headers match PO Number, etc.');
+      setTimeout(() => setExcelStatus(null), 5000);
+    }
+  };
+
+  // Bulk Import / Update DN records from Normal Excel File (.xlsx / .xls / .csv)
+  const handleDnExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !firebaseUser || !employeeProfile) return;
+    e.target.value = '';
+
+    try {
+      setExcelStatus('Importing DN records from Excel file...');
+      const rows = await parseExcelForDnEntries(file);
+      let createdCount = 0;
+      let updatedCount = 0;
+
+      for (const item of rows) {
+        const existingMatch = dnRecords.find(
+          (d) => d.dnNumber.toLowerCase() === item.dnNumber.toLowerCase()
+        );
+        if (existingMatch) {
+          await updateDoc(doc(db, 'dn_records', existingMatch.id), {
+            dnDate: item.dnDate.slice(0, 30),
+            dnNumber: item.dnNumber.slice(0, 80),
+            facilityName: item.facilityName.slice(0, 120),
+            parentPoDetails: item.parentPoDetails.slice(0, 200),
+            dnSkuIdItemName: item.dnSkuIdItemName.slice(0, 250),
+            dnQty: Number(item.dnQty) || 0,
+            whPocDetails: item.whPocDetails.slice(0, 200),
+            lrNo: item.lrNo.slice(0, 80),
+            reportFileName: item.reportFileName.slice(0, 200),
+            reportFileType: item.reportFileType.slice(0, 100),
+            reportFileSize: Number(item.reportFileSize) || 0,
+            reportFileDataUrl: '',
+            updatedByUid: firebaseUser.uid,
+            updatedByName: employeeProfile.employeeName.slice(0, 100),
+            updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+            updatedAt: serverTimestamp(),
+          });
+          updatedCount++;
+        } else {
+          const dnId = generateSafeId('dn');
+          await setDoc(doc(db, 'dn_records', dnId), {
+            dnDate: item.dnDate.slice(0, 30),
+            dnNumber: item.dnNumber.slice(0, 80),
+            facilityName: item.facilityName.slice(0, 120),
+            parentPoDetails: item.parentPoDetails.slice(0, 200),
+            dnSkuIdItemName: item.dnSkuIdItemName.slice(0, 250),
+            dnQty: Number(item.dnQty) || 0,
+            whPocDetails: item.whPocDetails.slice(0, 200),
+            lrNo: item.lrNo.slice(0, 80),
+            reportFileName: item.reportFileName.slice(0, 200),
+            reportFileType: item.reportFileType.slice(0, 100),
+            reportFileSize: Number(item.reportFileSize) || 0,
+            reportFileDataUrl: '',
+            orgScope: 'instamart_ops',
+            createdByUid: firebaseUser.uid,
+            createdByName: employeeProfile.employeeName.slice(0, 100),
+            createdByEmpId: employeeProfile.employeeId.slice(0, 50),
+            updatedByUid: firebaseUser.uid,
+            updatedByName: employeeProfile.employeeName.slice(0, 100),
+            updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          createdCount++;
+        }
+      }
+
+      await recordActivity(
+        'Excel File DN Import / Update',
+        'DN_TRACKER',
+        file.name,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) imported DN Excel "${file.name}" (${createdCount} new DNs, ${updatedCount} updated DNs).`
+      );
+      setExcelStatus(`DN Excel Imported: ${createdCount} new, ${updatedCount} updated`);
+      setTimeout(() => setExcelStatus(null), 5000);
+    } catch (err) {
+      console.error('DN Excel import error:', err);
+      setExcelStatus('Failed to read DN Excel file.');
+      setTimeout(() => setExcelStatus(null), 5000);
     }
   };
 
@@ -489,19 +699,6 @@ export default function App() {
         po.poNumber,
         `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked Pickup Status YES for PO ${po.poNumber}. Record shifted to In Transit and locked for non-admins.`
       );
-      const nextPos = purchaseOrders.map((p) =>
-        p.id === po.id
-          ? {
-              ...p,
-              pickupStatus: 'YES' as const,
-              workflowStage: 'IN_TRANSIT' as const,
-              status: 'In Transit',
-              updatedByName: employeeProfile.employeeName,
-              updatedByEmpId: employeeProfile.employeeId,
-            }
-          : p
-      );
-      await triggerAutoGoogleSheetSync(nextPos, dnRecords);
       setActiveTab('IN_TRANSIT');
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
@@ -558,23 +755,6 @@ export default function App() {
           data.hasDn ? ` with DN: ${data.grnDnSummary}` : ''
         }.`
       );
-
-      const nextPos = purchaseOrders.map((p) =>
-        p.id === grnTargetPo.id
-          ? {
-              ...p,
-              workflowStage: 'GRN' as const,
-              inwardStatus: 'SUCCESS' as const,
-              status: data.status,
-              grnNumber: data.grnNumber,
-              grnDnSummary: data.grnDnSummary,
-              hasDn: data.hasDn,
-              updatedByName: employeeProfile.employeeName,
-              updatedByEmpId: employeeProfile.employeeId,
-            }
-          : p
-      );
-      await triggerAutoGoogleSheetSync(nextPos, dnRecords);
       setActiveTab('GRN');
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${grnTargetPo.id}`);
@@ -613,10 +793,6 @@ export default function App() {
           values.dnNumber,
           `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated DN ${values.dnNumber} (Qty: ${values.dnQty}, LR: ${values.lrNo}).`
         );
-        const nextDns = dnRecords.map((d) =>
-          d.id === editingDn.id ? ({ ...d, ...updatePayload } as DnRecord) : d
-        );
-        await triggerAutoGoogleSheetSync(purchaseOrders, nextDns);
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `dn_records/${editingDn.id}`);
       }
@@ -653,8 +829,6 @@ export default function App() {
           values.dnNumber,
           `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created DN ${values.dnNumber} for ${values.facilityName} (LR No: ${values.lrNo}).`
         );
-        const nextDns = [{ id: dnId, ...newDnDoc }, ...dnRecords];
-        await triggerAutoGoogleSheetSync(purchaseOrders, nextDns);
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `dn_records/${dnId}`);
       }
@@ -666,7 +840,7 @@ export default function App() {
     setConfirmState({
       isOpen: true,
       title: `Delete Purchase Order ${po.poNumber}?`,
-      description: `Are you sure you want to permanently delete PO ${po.poNumber} (${po.itemName}) and update the linked Google Sheet? This action cannot be undone.`,
+      description: `Are you sure you want to permanently delete PO ${po.poNumber} (${po.itemName})? This action cannot be undone.`,
       confirmLabel: 'Delete PO',
       onConfirm: async () => {
         setConfirmState((prev) => ({ ...prev, isOpen: false }));
@@ -678,56 +852,11 @@ export default function App() {
             po.poNumber,
             `Admin ${employeeProfile?.employeeName} (${employeeProfile?.employeeId}) deleted PO ${po.poNumber}.`
           );
-          const nextPos = purchaseOrders.filter((p) => p.id !== po.id);
-          await triggerAutoGoogleSheetSync(nextPos, dnRecords);
         } catch (err) {
           handleFirestoreError(err, OperationType.DELETE, `purchase_orders/${po.id}`);
         }
       },
     });
-  };
-
-  // Google Sheets setup handlers
-  const handleCreateNewSheet = async (title: string) => {
-    if (!firebaseUser || !employeeProfile) return;
-    const newSheetId = await createInstamartSpreadsheet(title);
-    await updateDoc(doc(db, 'employees', firebaseUser.uid), {
-      spreadsheetId: newSheetId,
-      updatedAt: serverTimestamp(),
-    });
-    setEmployeeProfile({ ...employeeProfile, spreadsheetId: newSheetId });
-    await syncAllTabsToGoogleSheet(newSheetId, purchaseOrders, dnRecords);
-    await recordActivity(
-      'Created & Linked Google Spreadsheet',
-      'SHEETS_SYNC',
-      newSheetId.slice(0, 24),
-      `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created and synced Google Sheet "${title}".`
-    );
-  };
-
-  const handleLinkExistingSheet = async (sheetId: string) => {
-    if (!firebaseUser || !employeeProfile) return;
-    await updateDoc(doc(db, 'employees', firebaseUser.uid), {
-      spreadsheetId: sheetId,
-      updatedAt: serverTimestamp(),
-    });
-    setEmployeeProfile({ ...employeeProfile, spreadsheetId: sheetId });
-    await syncAllTabsToGoogleSheet(sheetId, purchaseOrders, dnRecords);
-    await recordActivity(
-      'Linked Existing Google Spreadsheet',
-      'SHEETS_SYNC',
-      sheetId.slice(0, 24),
-      `${employeeProfile.employeeName} (${employeeProfile.employeeId}) linked and synced Google Sheet.`
-    );
-  };
-
-  const handleManualSyncWithConfirmation = async () => {
-    if (!employeeProfile?.spreadsheetId) return;
-    await syncAllTabsToGoogleSheet(
-      employeeProfile.spreadsheetId,
-      purchaseOrders,
-      dnRecords
-    );
   };
 
   // Filtered lists
@@ -814,8 +943,10 @@ export default function App() {
         existingProfile={employeeProfile}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode(!darkMode)}
+        onEmailSignUp={handleEmailSignUp}
+        onEmailSignIn={handleEmailSignIn}
         onGoogleLogin={handleGoogleLogin}
-        onCompleteSignupOrProfile={handleCompleteSignupOrProfile}
+        onCompleteGoogleProfile={handleCompleteGoogleProfile}
         isSubmitting={isSubmittingAuth}
         authError={authError}
       />
@@ -830,6 +961,22 @@ export default function App() {
         darkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
       }`}
     >
+      {/* Hidden File Inputs for Normal Excel (.xlsx/.csv) Import/Update */}
+      <input
+        ref={poExcelInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        onChange={handlePoExcelUpload}
+        className="hidden"
+      />
+      <input
+        ref={dnExcelInputRef}
+        type="file"
+        accept=".xlsx,.xls,.csv"
+        onChange={handleDnExcelUpload}
+        className="hidden"
+      />
+
       {/* Top Bar Contract: Zone 1 Brand | Zone 2 Nav Tabs | Zone 3 Actions */}
       <header
         className={`sticky top-0 z-30 flex items-center justify-between px-6 py-3.5 border-b ${
@@ -844,8 +991,19 @@ export default function App() {
           Instamart PO & DN Tracker
         </a>
 
-        {/* Zone 2: 5 Primary Navigation Links */}
-        <nav className="hidden lg:flex items-center gap-6 text-xs font-semibold">
+        {/* Zone 2: 6 Primary Navigation Links */}
+        <nav className="hidden lg:flex items-center gap-5 text-xs font-semibold">
+          <button
+            type="button"
+            onClick={() => setActiveTab('DASHBOARD')}
+            className={`py-1 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
+              activeTab === 'DASHBOARD'
+                ? 'border-orange-500 text-orange-600 dark:text-orange-400'
+                : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+            }`}
+          >
+            Performance Dashboard
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab('PO_ENTRY')}
@@ -903,25 +1061,21 @@ export default function App() {
           </button>
         </nav>
 
-        {/* Zone 3: Primary Actions */}
+        {/* Zone 3: Primary Actions (Master Excel Download, Theme Toggle, Logout) */}
         <div className="flex items-center gap-2.5">
           <button
             type="button"
-            onClick={() => setIsSheetsModalOpen(true)}
+            onClick={() =>
+              exportMasterWorkbookToExcel(purchaseOrders, dnRecords, activityLogs)
+            }
             className={`px-3.5 py-2 rounded-lg text-xs font-semibold border flex items-center gap-2 transition-colors whitespace-nowrap cursor-pointer ${
-              employeeProfile.spreadsheetId
-                ? darkMode
-                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                  : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                : darkMode
-                ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
-                : 'border-slate-300 bg-white text-slate-800 hover:bg-slate-100'
+              darkMode
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
             }`}
           >
             <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-            <span>
-              {employeeProfile.spreadsheetId ? 'Google Sheet Linked' : 'Link Google Sheet'}
-            </span>
+            <span>Download Full Excel Workbook (.xlsx)</span>
           </button>
 
           <button
@@ -974,11 +1128,11 @@ export default function App() {
               {employeeProfile.role}
             </strong>
           </span>
-          {syncStatus && (
+          {excelStatus && (
             <>
               <span>·</span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                {syncStatus}
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                {excelStatus}
               </span>
             </>
           )}
@@ -988,6 +1142,7 @@ export default function App() {
         <div className="flex lg:hidden items-center gap-1 overflow-x-auto">
           {(
             [
+              ['DASHBOARD', 'Dashboard'],
               ['PO_ENTRY', 'PO Entry'],
               ['IN_TRANSIT', 'In Transit'],
               ['GRN', 'GRN'],
@@ -1009,20 +1164,6 @@ export default function App() {
             </button>
           ))}
         </div>
-
-        {employeeProfile.spreadsheetId && (
-          <div className="flex items-center gap-3">
-            <a
-              href={`https://docs.google.com/spreadsheets/d/${employeeProfile.spreadsheetId}/edit`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-1"
-            >
-              <span>Open Live Google Sheet</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          </div>
-        )}
       </div>
 
       {/* Main Content Container */}
@@ -1103,10 +1244,22 @@ export default function App() {
             />
           </div>
 
-          {/* Context-Specific Primary Action + Download / PDF / Excel Buttons */}
+          {/* Context-Specific Primary Action + Normal Excel Import/Update + PDF / Excel / CSV Buttons */}
           <div className="flex flex-wrap items-center gap-2.5">
             {activeTab === 'PO_ENTRY' && (
               <>
+                <button
+                  type="button"
+                  onClick={() => poExcelInputRef.current?.click()}
+                  className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                    darkMode
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                      : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                  }`}
+                >
+                  <Upload className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Import / Update from Excel</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => exportPoListToExcel(poEntryList, 'PO_Entry')}
@@ -1159,6 +1312,20 @@ export default function App() {
 
             {activeTab === 'IN_TRANSIT' && (
               <>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => poExcelInputRef.current?.click()}
+                    className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                      darkMode
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                        : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                    }`}
+                  >
+                    <Upload className="w-3.5 h-3.5 text-emerald-500" />
+                    <span>Update from Excel (Admin)</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => exportPoListToExcel(inTransitList, 'In_Transit')}
@@ -1243,6 +1410,18 @@ export default function App() {
               <>
                 <button
                   type="button"
+                  onClick={() => dnExcelInputRef.current?.click()}
+                  className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                    darkMode
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                      : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                  }`}
+                >
+                  <Upload className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Import / Update DN Excel</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => exportDnListToExcel(filteredDnList)}
                   className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
                     darkMode
@@ -1323,6 +1502,15 @@ export default function App() {
           </div>
         </div>
 
+        {/* TAB 0: PERFORMANCE DASHBOARD */}
+        {activeTab === 'DASHBOARD' && (
+          <PerformanceDashboard
+            purchaseOrders={purchaseOrders}
+            dnRecords={dnRecords}
+            darkMode={darkMode}
+          />
+        )}
+
         {/* TAB 1: NEW PO ENTRY */}
         {activeTab === 'PO_ENTRY' && (
           <div
@@ -1336,7 +1524,7 @@ export default function App() {
                   01. Instamart New PO Entry (Backoffice & Admin)
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  All 21 PO fields · Switching Pickup Status to YES immediately shifts the entire PO to the In Transit tab.
+                  All 21 PO fields · Switching Pickup Status to YES immediately shifts the entire PO to the In Transit tab. You can also import/update directly from an Excel (.xlsx) file.
                 </p>
               </div>
             </div>
@@ -1345,19 +1533,33 @@ export default function App() {
               <div className="p-12 text-center space-y-3">
                 <div className="text-sm font-semibold">No Pending PO Entries</div>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  When a new Instamart PO arrives, click below to enter all 21 PO parameters and sync directly with Google Sheets.
+                  When a new Instamart PO arrives, click below to enter all 21 PO parameters or upload an Excel (.xlsx) sheet.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingPo(null);
-                    setIsPoModalOpen(true);
-                  }}
-                  className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Log First Instamart PO</span>
-                </button>
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingPo(null);
+                      setIsPoModalOpen(true);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Log First Instamart PO</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => poExcelInputRef.current?.click()}
+                    className={`px-4 py-2 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer ${
+                      darkMode
+                        ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Upload className="w-4 h-4 text-emerald-500" />
+                    <span>Import from Excel (.xlsx)</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -1510,7 +1712,7 @@ export default function App() {
                   <span>02. In Transit Shipments (Pickup Status: YES)</span>
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  PO fields in this tab are locked for standard employees and can only be edited by Admin. When inwarding succeeds, click "Inward Success → Move to GRN".
+                  PO fields in this tab are locked for standard employees and can only be edited by Admin. When inwarding succeeds, click "Inward Success → GRN".
                 </p>
               </div>
               <div className="text-xs font-medium text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
@@ -1807,20 +2009,34 @@ export default function App() {
               <div className="p-12 text-center space-y-3">
                 <div className="text-sm font-semibold">No Discrepancy Notes Logged</div>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Warehouse and Backoffice teams can log and update Discrepancy Notes with PDF/Spreadsheet reports and LR Numbers here.
+                  Warehouse and Backoffice teams can log and update Discrepancy Notes manually or import directly from an Excel (.xlsx) sheet.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingDn(null);
-                    setPrefillDnFromPo(null);
-                    setIsDnModalOpen(true);
-                  }}
-                  className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Create First DN Tracker Entry</span>
-                </button>
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingDn(null);
+                      setPrefillDnFromPo(null);
+                      setIsDnModalOpen(true);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Create First DN Tracker Entry</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => dnExcelInputRef.current?.click()}
+                    className={`px-4 py-2 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer ${
+                      darkMode
+                        ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
+                        : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Upload className="w-4 h-4 text-emerald-500" />
+                    <span>Import DN Excel (.xlsx)</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -2039,18 +2255,6 @@ export default function App() {
           setPrefillDnFromPo(po);
           setIsDnModalOpen(true);
         }}
-        darkMode={darkMode}
-      />
-
-      <SheetsSetupModal
-        isOpen={isSheetsModalOpen}
-        onClose={() => setIsSheetsModalOpen(false)}
-        currentSpreadsheetId={employeeProfile.spreadsheetId}
-        hasGoogleToken={Boolean(getAccessToken() || googleToken)}
-        onReconnectGoogle={handleGoogleLogin}
-        onCreateNewSheet={handleCreateNewSheet}
-        onLinkExistingSheet={handleLinkExistingSheet}
-        onManualSyncNow={handleManualSyncWithConfirmation}
         darkMode={darkMode}
       />
 

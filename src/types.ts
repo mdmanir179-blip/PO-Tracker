@@ -92,4 +92,5 @@ export interface ActivityLog {
   createdAt?: Timestamp | Date | string;
 }
 
-export type ActiveTab = 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN' | 'DN_TRACKER' | 'ADMIN_AUDIT';
+export type ActiveTab = 'DASHBOARD' | 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN' | 'DN_TRACKER' | 'ADMIN_AUDIT';
+

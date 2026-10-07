@@ -181,7 +181,7 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
                 : 'Instamart DN Tracker — Log Discrepancy Note'}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Editable by Warehouse, Backoffice, and Admin teams · Syncs directly to Google Sheets
+              Editable by Warehouse, Backoffice, and Admin teams · Supports Excel (.xlsx), PDF, and CSV export/import
             </p>
           </div>
           <button
