@@ -1,27 +1,56 @@
 import { Timestamp } from 'firebase/firestore';
 
-export type TeamRole = 'admin' | 'backoffice' | 'warehouse';
+export type TeamRole = 'admin' | 'backoffice' | 'warehouse' | 'logistics' | 'print';
 
 export type WorkflowStage = 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN';
+
+export interface EmployeePermissions {
+  canEditPo: boolean;
+  canManageLogistics: boolean;
+  canVerifyPrint: boolean;
+  canManageGrn: boolean;
+  canManageDn: boolean;
+}
 
 export interface EmployeeProfile {
   uid: string;
   employeeName: string;
   employeeId: string;
+  email?: string;
   role: TeamRole;
+  accessStatus?: 'APPROVED' | 'RESTRICTED';
+  permissions?: EmployeePermissions;
   spreadsheetId: string;
+  orgScope?: 'instamart_ops';
   createdAt?: Timestamp | Date | string;
   updatedAt?: Timestamp | Date | string;
+}
+
+export interface ProductCatalogItem {
+  id: string;
+  itemId: string;
+  itemName: string;
+  orgScope: 'instamart_ops';
+  updatedByName: string;
+  updatedAt?: Timestamp | Date | string;
+}
+
+export interface PoLineItem {
+  itemId: string;
+  itemName: string;
+  qty: number;
 }
 
 export interface PurchaseOrder {
   id: string;
   poNumber: string;
   orderDate: string;
+  poExpiryDate?: string;
   warehouseName: string;
   itemId: string;
   itemName: string;
   totalQty: number;
+  lineItems?: PoLineItem[];
   invoiceNo: string;
   shipDate: string;
   appointmentId: string;
@@ -37,6 +66,8 @@ export interface PurchaseOrder {
   clearBagNo: string;
   comment: string;
   pickupStatus: 'YES' | 'NO';
+  printVerified?: 'YES' | 'NO';
+  printVerifiedBy?: string;
   workflowStage: WorkflowStage;
   inwardStatus: 'PENDING' | 'SUCCESS';
   grnNumber: string;
@@ -81,7 +112,15 @@ export interface DnRecord {
 export interface ActivityLog {
   id: string;
   action: string;
-  module: 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN' | 'DN_TRACKER' | 'SHEETS_SYNC';
+  module:
+    | 'PO_ENTRY'
+    | 'IN_TRANSIT'
+    | 'GRN'
+    | 'DN_TRACKER'
+    | 'LOGISTICS'
+    | 'PRINT_TEAM'
+    | 'ADMIN_IAM'
+    | 'SHEETS_SYNC';
   referenceNo: string;
   details: string;
   employeeUid: string;
@@ -92,5 +131,12 @@ export interface ActivityLog {
   createdAt?: Timestamp | Date | string;
 }
 
-export type ActiveTab = 'DASHBOARD' | 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN' | 'DN_TRACKER' | 'ADMIN_AUDIT';
-
+export type ActiveTab =
+  | 'DASHBOARD'
+  | 'PO_ENTRY'
+  | 'LOGISTICS'
+  | 'PRINT_TEAM'
+  | 'IN_TRANSIT'
+  | 'GRN'
+  | 'DN_TRACKER'
+  | 'ADMIN_AUDIT';

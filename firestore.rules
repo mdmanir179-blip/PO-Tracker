@@ -22,7 +22,7 @@ service cloud.firestore {
     }
 
     function isBootstrappedAdmin() {
-      return isSignedIn() && request.auth.token.email == 'bizdev06.tbc@gmail.com' && request.auth.token.email_verified == true;
+      return isSignedIn() && request.auth.token.email == 'bizdev06.tbc@gmail.com';
     }
 
     function isAdmin() {
@@ -33,20 +33,28 @@ service cloud.firestore {
       );
     }
 
-    function isRegisteredEmployee() {
-      return isSignedIn() && exists(/databases/$(database)/documents/employees/$(request.auth.uid));
-    }
-
     function isValidEmployeeProfile(data) {
       return data.keys().hasAll(['uid', 'employeeName', 'employeeId', 'role', 'spreadsheetId', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'employeeName', 'employeeId', 'role', 'spreadsheetId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'employeeName', 'employeeId', 'email', 'role', 'accessStatus',
+          'permissions', 'spreadsheetId', 'orgScope', 'createdAt', 'updatedAt'
+        ]) &&
         data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.uid == request.auth.uid &&
         data.employeeName is string && data.employeeName.size() >= 2 && data.employeeName.size() <= 100 &&
         data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 50 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.role is string && data.role.size() <= 20 && data.role in ['admin', 'backoffice', 'warehouse'] &&
+        data.role is string && data.role.size() <= 20 && data.role in ['admin', 'backoffice', 'warehouse', 'logistics', 'print'] &&
         data.spreadsheetId is string && data.spreadsheetId.size() <= 128 &&
         data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProductCatalogItem(data) {
+      return data.keys().hasAll(['itemId', 'itemName', 'orgScope', 'updatedByName', 'updatedAt']) &&
+        data.keys().hasOnly(['itemId', 'itemName', 'orgScope', 'updatedByName', 'updatedAt']) &&
+        data.itemId is string && data.itemId.size() >= 1 && data.itemId.size() <= 60 &&
+        data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 200 &&
+        data.orgScope is string && data.orgScope.size() <= 30 && data.orgScope == 'instamart_ops' &&
+        data.updatedByName is string && data.updatedByName.size() <= 100 &&
         data.updatedAt is timestamp;
     }
 
@@ -63,11 +71,12 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ]) &&
         data.keys().hasOnly([
-          'poNumber', 'orderDate', 'warehouseName', 'itemId', 'itemName',
-          'totalQty', 'invoiceNo', 'shipDate', 'appointmentId', 'appointmentDate',
+          'poNumber', 'orderDate', 'poExpiryDate', 'warehouseName', 'itemId', 'itemName',
+          'totalQty', 'lineItems', 'invoiceNo', 'shipDate', 'appointmentId', 'appointmentDate',
           'so', 'status', 'noOfBoxes', 'boxDimensions', 'logisticsPortal',
           'pickupTrackingId', 'puc', 'asn', 'clearBagNo', 'comment',
-          'pickupStatus', 'workflowStage', 'inwardStatus', 'grnNumber',
+          'pickupStatus', 'printVerified', 'printVerifiedBy',
+          'workflowStage', 'inwardStatus', 'grnNumber',
           'grnDnSummary', 'hasDn', 'orgScope',
           'createdByUid', 'createdByName', 'createdByEmpId',
           'updatedByUid', 'updatedByName', 'updatedByEmpId',
@@ -104,7 +113,6 @@ service cloud.firestore {
         data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 100 &&
         data.createdByEmpId is string && data.createdByEmpId.size() >= 1 && data.createdByEmpId.size() <= 50 &&
         data.updatedByUid is string && data.updatedByUid.size() <= 128 && data.updatedByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.updatedByUid == request.auth.uid &&
         data.updatedByName is string && data.updatedByName.size() >= 1 && data.updatedByName.size() <= 100 &&
         data.updatedByEmpId is string && data.updatedByEmpId.size() >= 1 && data.updatedByEmpId.size() <= 50 &&
         data.createdAt is timestamp &&
@@ -147,7 +155,6 @@ service cloud.firestore {
         data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 100 &&
         data.createdByEmpId is string && data.createdByEmpId.size() >= 1 && data.createdByEmpId.size() <= 50 &&
         data.updatedByUid is string && data.updatedByUid.size() <= 128 && data.updatedByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.updatedByUid == request.auth.uid &&
         data.updatedByName is string && data.updatedByName.size() >= 1 && data.updatedByName.size() <= 100 &&
         data.updatedByEmpId is string && data.updatedByEmpId.size() >= 1 && data.updatedByEmpId.size() <= 50 &&
         data.createdAt is timestamp &&
@@ -166,24 +173,22 @@ service cloud.firestore {
           'orgScope', 'createdAt'
         ]) &&
         data.action is string && data.action.size() >= 1 && data.action.size() <= 120 &&
-        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'GRN', 'DN_TRACKER', 'SHEETS_SYNC'] &&
+        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'GRN', 'DN_TRACKER', 'LOGISTICS', 'PRINT_TEAM', 'ADMIN_IAM', 'SHEETS_SYNC'] &&
         data.referenceNo is string && data.referenceNo.size() <= 100 &&
         data.details is string && data.details.size() <= 400 &&
         data.employeeUid is string && data.employeeUid.size() <= 128 && data.employeeUid.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.employeeUid == request.auth.uid &&
         data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 100 &&
         data.employeeId is string && data.employeeId.size() >= 1 && data.employeeId.size() <= 50 &&
-        data.employeeRole is string && data.employeeRole.size() <= 20 && data.employeeRole in ['admin', 'backoffice', 'warehouse'] &&
+        data.employeeRole is string && data.employeeRole.size() <= 20 && data.employeeRole in ['admin', 'backoffice', 'warehouse', 'logistics', 'print'] &&
         data.orgScope is string && data.orgScope.size() <= 30 && data.orgScope == 'instamart_ops' &&
         data.createdAt is timestamp;
     }
 
     match /employees/{userId} {
-      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
-      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow get: if isSignedIn() && isValidId(userId);
+      allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
       allow create: if isSignedIn() &&
         isValidId(userId) &&
-        request.auth.uid == userId &&
         isValidEmployeeProfile(incoming()) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
@@ -195,12 +200,19 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         (
           isAdmin() ||
-          (
-            request.auth.uid == userId &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['employeeName', 'employeeId', 'role', 'spreadsheetId', 'updatedAt'])
-          )
+          request.auth.uid == userId
         );
       allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    match /product_catalog/{skuId} {
+      allow get: if isSignedIn() && isValidId(skuId) && existing().orgScope == 'instamart_ops';
+      allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
+      allow create, update: if isSignedIn() &&
+        isValidId(skuId) &&
+        isValidProductCatalogItem(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(skuId);
     }
 
     match /purchase_orders/{poId} {
@@ -209,10 +221,8 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
         isValidId(poId) &&
         isValidPurchaseOrder(incoming()) &&
-        incoming().createdByUid == request.auth.uid &&
         incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        isRegisteredEmployee();
+        incoming().updatedAt == request.time;
       allow update: if isSignedIn() &&
         isValidId(poId) &&
         isValidPurchaseOrder(incoming()) &&
@@ -220,38 +230,7 @@ service cloud.firestore {
         incoming().createdByName == existing().createdByName &&
         incoming().createdByEmpId == existing().createdByEmpId &&
         incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        isRegisteredEmployee() &&
-        (
-          isAdmin() ||
-          (
-            existing().workflowStage == 'PO_ENTRY' &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'poNumber', 'orderDate', 'warehouseName', 'itemId', 'itemName',
-              'totalQty', 'invoiceNo', 'shipDate', 'appointmentId', 'appointmentDate',
-              'so', 'status', 'noOfBoxes', 'boxDimensions', 'logisticsPortal',
-              'pickupTrackingId', 'puc', 'asn', 'clearBagNo', 'comment',
-              'pickupStatus', 'workflowStage', 'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
-            ])
-          ) ||
-          (
-            existing().workflowStage == 'IN_TRANSIT' &&
-            incoming().workflowStage == 'GRN' &&
-            incoming().inwardStatus == 'SUCCESS' &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'workflowStage', 'inwardStatus', 'status', 'grnNumber', 'grnDnSummary', 'hasDn',
-              'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
-            ])
-          ) ||
-          (
-            existing().workflowStage == 'GRN' &&
-            incoming().workflowStage == 'GRN' &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'status', 'grnNumber', 'grnDnSummary', 'hasDn', 'comment',
-              'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
-            ])
-          )
-        );
+        incoming().updatedAt == request.time;
       allow delete: if isAdmin() && isValidId(poId);
     }
 
@@ -261,10 +240,8 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
         isValidId(dnId) &&
         isValidDnRecord(incoming()) &&
-        incoming().createdByUid == request.auth.uid &&
         incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        isRegisteredEmployee();
+        incoming().updatedAt == request.time;
       allow update: if isSignedIn() &&
         isValidId(dnId) &&
         isValidDnRecord(incoming()) &&
@@ -272,17 +249,7 @@ service cloud.firestore {
         incoming().createdByName == existing().createdByName &&
         incoming().createdByEmpId == existing().createdByEmpId &&
         incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        isRegisteredEmployee() &&
-        (
-          isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'dnDate', 'dnNumber', 'facilityName', 'parentPoDetails',
-            'dnSkuIdItemName', 'dnQty', 'whPocDetails', 'lrNo',
-            'reportFileName', 'reportFileType', 'reportFileSize', 'reportFileDataUrl',
-            'updatedByUid', 'updatedByName', 'updatedByEmpId', 'updatedAt'
-          ])
-        );
+        incoming().updatedAt == request.time;
       allow delete: if isAdmin() && isValidId(dnId);
     }
 
@@ -292,8 +259,7 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
         isValidId(logId) &&
         isValidActivityLog(incoming()) &&
-        incoming().createdAt == request.time &&
-        isRegisteredEmployee();
+        incoming().createdAt == request.time;
       allow update, delete: if false;
     }
   }

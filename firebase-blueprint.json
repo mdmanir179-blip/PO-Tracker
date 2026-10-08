@@ -2,14 +2,14 @@
   "entities": {
     "EmployeeProfile": {
       "title": "EmployeeProfile",
-      "description": "Public directory profile for employees containing non-PII work identity and role.",
+      "description": "Public directory profile for employees containing work identity, department role, and access permissions.",
       "type": "object",
       "properties": {
         "uid": {
           "type": "string",
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Firebase Auth UID of the employee"
+          "description": "User ID of the employee"
         },
         "employeeName": {
           "type": "string",
@@ -24,16 +24,33 @@
           "pattern": "^[a-zA-Z0-9_\\-]+$",
           "description": "Mandatory company Employee ID"
         },
+        "email": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Employee work email"
+        },
         "role": {
           "type": "string",
-          "enum": ["admin", "backoffice", "warehouse"],
+          "enum": ["admin", "backoffice", "warehouse", "logistics", "print"],
           "maxLength": 20,
-          "description": "Team role of the employee"
+          "description": "Department role of the employee"
+        },
+        "accessStatus": {
+          "type": "string",
+          "enum": ["APPROVED", "RESTRICTED"],
+          "maxLength": 20,
+          "description": "Admin-controlled access permission state"
         },
         "spreadsheetId": {
           "type": "string",
           "maxLength": 128,
-          "description": "Optional linked Google Spreadsheet ID"
+          "description": "Optional reference ID"
+        },
+        "orgScope": {
+          "type": "string",
+          "enum": ["instamart_ops"],
+          "maxLength": 30,
+          "description": "Organizational partition scope"
         },
         "createdAt": {
           "type": "string",
@@ -46,11 +63,47 @@
           "description": "Server timestamp of last profile update"
         }
       },
-      "required": ["uid", "employeeName", "employeeId", "role", "createdAt", "updatedAt"]
+      "required": ["uid", "employeeName", "employeeId", "role", "spreadsheetId", "createdAt", "updatedAt"]
+    },
+    "ProductCatalogItem": {
+      "title": "ProductCatalogItem",
+      "description": "Master product catalog mapping Item ID / SKU to Item Name for instant auto-fill.",
+      "type": "object",
+      "properties": {
+        "itemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Product SKU / Item ID"
+        },
+        "itemName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Product Name auto-populated when Item ID is entered"
+        },
+        "orgScope": {
+          "type": "string",
+          "enum": ["instamart_ops"],
+          "maxLength": 30,
+          "description": "Organizational partition scope"
+        },
+        "updatedByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Employee who added/updated the SKU"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp"
+        }
+      },
+      "required": ["itemId", "itemName", "orgScope", "updatedByName", "updatedAt"]
     },
     "PurchaseOrder": {
       "title": "PurchaseOrder",
-      "description": "Instamart Purchase Order tracking record across PO Entry, In Transit, and GRN workflow stages.",
+      "description": "Instamart Purchase Order tracking record across PO Entry, Logistics, Print Verification, In Transit, and GRN stages.",
       "type": "object",
       "properties": {
         "poNumber": {
@@ -64,6 +117,11 @@
           "minLength": 1,
           "maxLength": 30,
           "description": "Order Date"
+        },
+        "poExpiryDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "PO Expiry Date"
         },
         "warehouseName": {
           "type": "string",
@@ -129,12 +187,12 @@
         "logisticsPortal": {
           "type": "string",
           "maxLength": 100,
-          "description": "Logistics Portal / Carrier name"
+          "description": "Logistics Partner / Portal name"
         },
         "pickupTrackingId": {
           "type": "string",
           "maxLength": 100,
-          "description": "Pickup Tracking ID"
+          "description": "PO Pickup Tracking ID"
         },
         "puc": {
           "type": "string",
@@ -161,6 +219,17 @@
           "enum": ["YES", "NO"],
           "maxLength": 10,
           "description": "Pickup Status: YES shifts record to In Transit"
+        },
+        "printVerified": {
+          "type": "string",
+          "enum": ["YES", "NO"],
+          "maxLength": 10,
+          "description": "Print Team Document Verification status (YES / NO)"
+        },
+        "printVerifiedBy": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Print Team member who verified the documents"
         },
         "workflowStage": {
           "type": "string",
@@ -418,25 +487,25 @@
     },
     "ActivityLog": {
       "title": "ActivityLog",
-      "description": "Audit log of every PO or DN creation and modification showing Employee Name, Employee ID, and Role for Admin visibility.",
+      "description": "Audit log of every PO, Logistics, Print, or DN action showing Employee Name, Employee ID, and Department Role for Admin visibility.",
       "type": "object",
       "properties": {
         "action": {
           "type": "string",
           "minLength": 1,
           "maxLength": 120,
-          "description": "Action summary (e.g. Created PO, Shifted to In Transit, Updated DN)"
+          "description": "Action summary"
         },
         "module": {
           "type": "string",
-          "enum": ["PO_ENTRY", "IN_TRANSIT", "GRN", "DN_TRACKER", "SHEETS_SYNC"],
+          "enum": ["PO_ENTRY", "IN_TRANSIT", "GRN", "DN_TRACKER", "LOGISTICS", "PRINT_TEAM", "ADMIN_IAM"],
           "maxLength": 30,
           "description": "System module where action occurred"
         },
         "referenceNo": {
           "type": "string",
           "maxLength": 100,
-          "description": "PO Number or DN Number affected"
+          "description": "PO Number, DN Number, or Employee ID affected"
         },
         "details": {
           "type": "string",
@@ -447,7 +516,7 @@
           "type": "string",
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Firebase Auth UID of the acting employee"
+          "description": "UID of the acting employee"
         },
         "employeeName": {
           "type": "string",
@@ -463,7 +532,7 @@
         },
         "employeeRole": {
           "type": "string",
-          "enum": ["admin", "backoffice", "warehouse"],
+          "enum": ["admin", "backoffice", "warehouse", "logistics", "print"],
           "maxLength": 20,
           "description": "Role of the acting employee"
         },
@@ -496,11 +565,15 @@
   "firestore": {
     "/employees/{userId}": {
       "schema": { "$ref": "#/entities/EmployeeProfile" },
-      "description": "Employee directory profiles containing Employee Name, Employee ID, and Role (Admin, Backoffice, Warehouse)."
+      "description": "Employee directory profiles containing Employee Name, Employee ID, Department Role, and Permissions."
+    },
+    "/product_catalog/{skuId}": {
+      "schema": { "$ref": "#/entities/ProductCatalogItem" },
+      "description": "Master Product SKU Catalog for instant Item Name auto-fill."
     },
     "/purchase_orders/{poId}": {
       "schema": { "$ref": "#/entities/PurchaseOrder" },
-      "description": "Master collection of Instamart Purchase Orders across PO Entry, In Transit, and GRN tabs."
+      "description": "Master collection of Instamart Purchase Orders across PO Entry, Logistics, Print Team, In Transit, and GRN tabs."
     },
     "/dn_records/{dnId}": {
       "schema": { "$ref": "#/entities/DnRecord" },

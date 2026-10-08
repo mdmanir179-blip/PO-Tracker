@@ -1,16 +1,18 @@
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { PurchaseOrder, DnRecord, ActivityLog } from '../types';
+import { PurchaseOrder, DnRecord, ActivityLog, PoLineItem } from '../types';
 import { PoFormValues } from '../components/PoFormModal';
 import { DnFormValues } from '../components/DnFormModal';
 
 export const PO_HEADERS = [
   'PO Number',
   'Order Date',
+  'PO Expiry Date',
   'Warehouse Name',
   'Item ID',
   'Item Name',
+  'All PO Line Items (SKU | Name | Qty)',
   'Total Qty',
   'Invoice No.',
   'Ship Date',
@@ -27,6 +29,7 @@ export const PO_HEADERS = [
   'Clear Bag No.',
   'Comment',
   'Pickup Status',
+  'Print Verified',
   'Workflow Stage',
   'Inward Status',
   'GRN Number',
@@ -49,13 +52,24 @@ export const DN_HEADERS = [
   'Last Updated By (Name & ID)',
 ];
 
+export function formatLineItemsSummary(po: PurchaseOrder): string {
+  if (Array.isArray(po.lineItems) && po.lineItems.length > 0) {
+    return po.lineItems
+      .map((li) => `${li.itemId} | ${li.itemName} (Qty: ${li.qty})`)
+      .join(' ; ');
+  }
+  return `${po.itemId} | ${po.itemName} (Qty: ${po.totalQty})`;
+}
+
 export function formatPoToRow(po: PurchaseOrder): (string | number)[] {
   return [
     po.poNumber,
     po.orderDate,
+    po.poExpiryDate || '',
     po.warehouseName,
     po.itemId,
     po.itemName,
+    formatLineItemsSummary(po),
     po.totalQty,
     po.invoiceNo,
     po.shipDate,
@@ -72,6 +86,7 @@ export function formatPoToRow(po: PurchaseOrder): (string | number)[] {
     po.clearBagNo,
     po.comment,
     po.pickupStatus,
+    po.printVerified || 'NO',
     po.workflowStage,
     po.inwardStatus,
     po.grnNumber,
@@ -97,7 +112,7 @@ export function formatDnToRow(dn: DnRecord): (string | number)[] {
   ];
 }
 
-// Export entire 4-tab Master Excel Workbook (.xlsx)
+// Export entire Master Excel Workbook (.xlsx)
 export function exportMasterWorkbookToExcel(
   purchaseOrders: PurchaseOrder[],
   dnRecords: DnRecord[],
@@ -150,6 +165,16 @@ export function exportMasterWorkbookToExcel(
   );
   XLSX.utils.book_append_sheet(
     workbook,
+    makePoSheet(purchaseOrders),
+    'Logistics Hub'
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
+    makePoSheet(purchaseOrders),
+    'Print Verification'
+  );
+  XLSX.utils.book_append_sheet(
+    workbook,
     makePoSheet(purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT')),
     'In Transit'
   );
@@ -187,7 +212,7 @@ export function exportMasterWorkbookToExcel(
   );
 }
 
-// Parse uploaded Excel (.xlsx / .xls / .csv) file for bulk PO Entry / Update
+// Parse uploaded Excel (.xlsx / .xls / .csv) file for bulk PO Entry / Update (groups multiple rows with same PO Number into multi-item POs)
 export async function parseExcelForPoEntries(file: File): Promise<PoFormValues[]> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
@@ -197,12 +222,22 @@ export async function parseExcelForPoEntries(file: File): Promise<PoFormValues[]
     defval: '',
   });
 
-  const parsed: PoFormValues[] = [];
+  const groupedByPo = new Map<string, PoFormValues>();
+
   for (const row of rawRows) {
     const poNumber = String(
       row['PO Number'] ?? row['poNumber'] ?? row['PO_Number'] ?? row['PO'] ?? ''
     ).trim();
     if (!poNumber) continue;
+
+    const key = poNumber.toUpperCase();
+    const itemId = String(
+      row['Item ID'] ?? row['itemId'] ?? row['SKU'] ?? 'SKU-001'
+    ).trim();
+    const itemName = String(
+      row['Item Name'] ?? row['itemName'] ?? row['Item'] ?? 'Instamart Item'
+    ).trim();
+    const rowQty = Number(row['Total Qty'] ?? row['totalQty'] ?? row['Qty'] ?? 1) || 1;
 
     const pickupRaw = String(
       row['Pickup Status'] ?? row['pickupStatus'] ?? row['Pickup'] ?? 'NO'
@@ -210,49 +245,65 @@ export async function parseExcelForPoEntries(file: File): Promise<PoFormValues[]
       .trim()
       .toUpperCase();
 
-    parsed.push({
-      poNumber,
-      orderDate: String(
-        row['Order Date'] ?? row['orderDate'] ?? new Date().toISOString().slice(0, 10)
-      ).trim(),
-      warehouseName: String(
-        row['Warehouse Name'] ?? row['warehouseName'] ?? row['Warehouse'] ?? 'General Hub'
-      ).trim(),
-      itemId: String(
-        row['Item ID'] ?? row['itemId'] ?? row['SKU'] ?? 'SKU-001'
-      ).trim(),
-      itemName: String(
-        row['Item Name'] ?? row['itemName'] ?? row['Item'] ?? 'Instamart Item'
-      ).trim(),
-      totalQty: Number(row['Total Qty'] ?? row['totalQty'] ?? row['Qty'] ?? 0) || 0,
-      invoiceNo: String(row['Invoice No.'] ?? row['invoiceNo'] ?? row['Invoice'] ?? '').trim(),
-      shipDate: String(row['Ship Date'] ?? row['shipDate'] ?? '').trim(),
-      appointmentId: String(
-        row['Appointment ID'] ?? row['appointmentId'] ?? ''
-      ).trim(),
-      appointmentDate: String(
-        row['Appointment Date'] ?? row['appointmentDate'] ?? ''
-      ).trim(),
-      so: String(row['SO'] ?? row['so'] ?? '').trim(),
-      status: String(row['Status'] ?? row['status'] ?? 'Scheduled').trim(),
-      noOfBoxes: Number(row['No. of Boxes'] ?? row['noOfBoxes'] ?? row['Boxes'] ?? 0) || 0,
-      boxDimensions: String(
-        row['Box Dimensions'] ?? row['boxDimensions'] ?? ''
-      ).trim(),
-      logisticsPortal: String(
-        row['Logistics Portal'] ?? row['logisticsPortal'] ?? ''
-      ).trim(),
-      pickupTrackingId: String(
-        row['Pickup Tracking ID'] ?? row['pickupTrackingId'] ?? ''
-      ).trim(),
-      puc: String(row['PUC'] ?? row['puc'] ?? '').trim(),
-      asn: String(row['ASN'] ?? row['asn'] ?? '').trim(),
-      clearBagNo: String(row['Clear Bag No.'] ?? row['clearBagNo'] ?? '').trim(),
-      comment: String(row['Comment'] ?? row['comment'] ?? '').trim(),
-      pickupStatus: pickupRaw === 'YES' ? 'YES' : 'NO',
-    });
+    const existing = groupedByPo.get(key);
+    if (existing) {
+      const nextLines: PoLineItem[] = [
+        ...existing.lineItems,
+        { itemId, itemName, qty: rowQty },
+      ];
+      const sumQty = nextLines.reduce((acc, l) => acc + (Number(l.qty) || 0), 0);
+      existing.lineItems = nextLines;
+      existing.totalQty = sumQty;
+      existing.itemId = `${nextLines[0].itemId} (+${nextLines.length - 1} more)`.slice(0, 60);
+      existing.itemName = nextLines
+        .map((l) => `${l.itemName} (${l.qty})`)
+        .join(', ')
+        .slice(0, 200);
+    } else {
+      groupedByPo.set(key, {
+        poNumber,
+        orderDate: String(
+          row['Order Date'] ?? row['orderDate'] ?? new Date().toISOString().slice(0, 10)
+        ).trim(),
+        poExpiryDate: String(
+          row['PO Expiry Date'] ?? row['poExpiryDate'] ?? row['Expiry Date'] ?? ''
+        ).trim(),
+        warehouseName: String(
+          row['Warehouse Name'] ?? row['warehouseName'] ?? row['Warehouse'] ?? 'General Hub'
+        ).trim(),
+        itemId,
+        itemName,
+        totalQty: rowQty,
+        lineItems: [{ itemId, itemName, qty: rowQty }],
+        invoiceNo: String(row['Invoice No.'] ?? row['invoiceNo'] ?? row['Invoice'] ?? '').trim(),
+        shipDate: String(row['Ship Date'] ?? row['shipDate'] ?? '').trim(),
+        appointmentId: String(
+          row['Appointment ID'] ?? row['appointmentId'] ?? ''
+        ).trim(),
+        appointmentDate: String(
+          row['Appointment Date'] ?? row['appointmentDate'] ?? ''
+        ).trim(),
+        so: String(row['SO'] ?? row['so'] ?? '').trim(),
+        status: String(row['Status'] ?? row['status'] ?? 'Scheduled').trim(),
+        noOfBoxes: Number(row['No. of Boxes'] ?? row['noOfBoxes'] ?? row['Boxes'] ?? 0) || 0,
+        boxDimensions: String(
+          row['Box Dimensions'] ?? row['boxDimensions'] ?? ''
+        ).trim(),
+        logisticsPortal: String(
+          row['Logistics Portal'] ?? row['logisticsPortal'] ?? ''
+        ).trim(),
+        pickupTrackingId: String(
+          row['Pickup Tracking ID'] ?? row['pickupTrackingId'] ?? ''
+        ).trim(),
+        puc: String(row['PUC'] ?? row['puc'] ?? '').trim(),
+        asn: String(row['ASN'] ?? row['asn'] ?? '').trim(),
+        clearBagNo: String(row['Clear Bag No.'] ?? row['clearBagNo'] ?? '').trim(),
+        comment: String(row['Comment'] ?? row['comment'] ?? '').trim(),
+        pickupStatus: pickupRaw === 'YES' ? 'YES' : 'NO',
+      });
+    }
   }
-  return parsed;
+  return Array.from(groupedByPo.values());
 }
 
 // Parse uploaded Excel (.xlsx / .xls / .csv) file for bulk DN Tracker Entry / Update
@@ -329,6 +380,113 @@ export function exportPoListToExcel(pos: PurchaseOrder[], tabName: string) {
   );
 }
 
+export function exportSinglePoToExcel(po: PurchaseOrder) {
+  const lines =
+    Array.isArray(po.lineItems) && po.lineItems.length > 0
+      ? po.lineItems
+      : [{ itemId: po.itemId, itemName: po.itemName, qty: po.totalQty }];
+
+  const rows = lines.map((li, idx) => ({
+    'PO Number': po.poNumber,
+    'Order Date': po.orderDate,
+    'PO Expiry Date': po.poExpiryDate || '-',
+    'Warehouse Name': po.warehouseName,
+    'Line #': idx + 1,
+    'Item ID': li.itemId,
+    'Item Name': li.itemName,
+    'Line Qty': li.qty,
+    'Total PO Qty': po.totalQty,
+    'Invoice No.': po.invoiceNo,
+    'Ship Date': po.shipDate,
+    'Appointment ID': po.appointmentId,
+    'Appointment Date': po.appointmentDate,
+    'SO': po.so,
+    'Status': po.status,
+    'No. of Boxes': po.noOfBoxes,
+    'Box Dimensions': po.boxDimensions,
+    'Logistics Partner': po.logisticsPortal,
+    'Pickup Tracking ID': po.pickupTrackingId,
+    'PUC': po.puc,
+    'ASN': po.asn,
+    'Clear Bag No.': po.clearBagNo,
+    'Print Verified': po.printVerified || 'NO',
+    'Verified By': po.printVerifiedBy || '-',
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, po.poNumber.slice(0, 31));
+  XLSX.writeFile(workbook, `Instamart_PO_${po.poNumber}_PrintSheet.xlsx`);
+}
+
+export function exportSinglePoToPdf(po: PurchaseOrder) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  doc.setFontSize(15);
+  doc.text(`Instamart Purchase Order & Print Verification Slip`, 40, 40);
+  doc.setFontSize(10);
+  doc.setTextColor(80);
+  doc.text(
+    `PO Number: ${po.poNumber}   |   Order Date: ${po.orderDate}   |   Expiry Date: ${
+      po.poExpiryDate || 'N/A'
+    }`,
+    40,
+    60
+  );
+  doc.text(
+    `Warehouse: ${po.warehouseName}   |   Print Verified: ${
+      po.printVerified || 'NO'
+    } (${po.printVerifiedBy || 'Pending'})`,
+    40,
+    76
+  );
+
+  const metaBody = [
+    ['Invoice No.', po.invoiceNo || '-', 'Ship Date', po.shipDate || '-'],
+    ['Appointment ID', po.appointmentId || '-', 'Appointment Date', po.appointmentDate || '-'],
+    ['Sales Order (SO)', po.so || '-', 'Status / Stage', `${po.status} (${po.workflowStage})`],
+    ['No. of Boxes', String(po.noOfBoxes), 'Box Dimensions', po.boxDimensions || '-'],
+    ['Logistics Partner', po.logisticsPortal || '-', 'Pickup Tracking ID', po.pickupTrackingId || '-'],
+    ['PUC / ASN', `${po.puc || '-'} / ${po.asn || '-'}`, 'Clear Bag No.', po.clearBagNo || '-'],
+  ];
+
+  autoTable(doc, {
+    startY: 92,
+    head: [['Field', 'Value', 'Field', 'Value']],
+    body: metaBody,
+    styles: { fontSize: 8.5, cellPadding: 5 },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+  });
+
+  const lines =
+    Array.isArray(po.lineItems) && po.lineItems.length > 0
+      ? po.lineItems
+      : [{ itemId: po.itemId, itemName: po.itemName, qty: po.totalQty }];
+
+  const finalY = (doc as any).lastAutoTable?.finalY || 240;
+  doc.setFontSize(11);
+  doc.setTextColor(20);
+  doc.text(
+    `PO Line Items (${lines.length} Items · Total Qty: ${po.totalQty})`,
+    40,
+    finalY + 24
+  );
+
+  autoTable(doc, {
+    startY: finalY + 34,
+    head: [['#', 'Item ID (SKU)', 'Product Item Name', 'Qty']],
+    body: lines.map((li, i) => [
+      String(i + 1),
+      li.itemId,
+      li.itemName,
+      String(li.qty),
+    ]),
+    styles: { fontSize: 9, cellPadding: 6 },
+    headStyles: { fillColor: [234, 88, 12], textColor: 255 },
+  });
+
+  doc.save(`Instamart_PO_${po.poNumber}_Document.pdf`);
+}
+
 export function exportPoListToCsv(pos: PurchaseOrder[], tabName: string) {
   const rows = pos.map((po) => {
     const arr = formatPoToRow(po);
@@ -365,36 +523,34 @@ export function exportPoListToPdf(pos: PurchaseOrder[], tabTitle: string) {
   const head = [
     [
       'PO Number',
-      'Order Date',
+      'Order / Expiry',
       'Warehouse',
-      'Item ID & Name',
-      'Qty',
-      'Invoice',
-      'Ship Date',
+      'Items (SKU & Name)',
+      'Total Qty',
+      'Invoice / Ship',
       'Appt ID / Date',
       'Boxes / Dim',
       'Logistics / Tracking',
       'PUC / ASN / Bag',
-      'Pickup',
-      'Stage / GRN',
+      'Print Verified',
+      'Pickup / Stage',
       'Updated By',
     ],
   ];
 
   const body = pos.map((po) => [
     po.poNumber,
-    po.orderDate,
+    `Ord: ${po.orderDate}\nExp: ${po.poExpiryDate || '-'}`,
     po.warehouseName,
-    `${po.itemId}\n${po.itemName}`,
+    formatLineItemsSummary(po),
     String(po.totalQty),
-    po.invoiceNo || '-',
-    po.shipDate || '-',
+    `${po.invoiceNo || '-'}\n${po.shipDate || '-'}`,
     `${po.appointmentId || '-'}\n${po.appointmentDate || ''}`,
     `${po.noOfBoxes} (${po.boxDimensions || '-'})`,
     `${po.logisticsPortal || '-'}\n${po.pickupTrackingId || '-'}`,
     `PUC:${po.puc || '-'} ASN:${po.asn || '-'}\nBag:${po.clearBagNo || '-'}`,
-    po.pickupStatus,
-    `${po.workflowStage}\n${po.grnNumber || ''}`,
+    po.printVerified || 'NO',
+    `${po.pickupStatus} / ${po.workflowStage}`,
     `${po.updatedByName}\n(${po.updatedByEmpId})`,
   ]);
 

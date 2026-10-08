@@ -3,6 +3,8 @@ import {
   ShieldCheck,
   Building2,
   Warehouse,
+  Truck,
+  Printer,
   Sun,
   Moon,
   ArrowRight,
@@ -148,6 +150,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       title: 'Warehouse Team',
       icon: <Warehouse className="w-4 h-4" />,
     },
+    {
+      id: 'logistics',
+      title: 'Logistics Team',
+      icon: <Truck className="w-4 h-4" />,
+    },
+    {
+      id: 'print',
+      title: 'Print Team',
+      icon: <Printer className="w-4 h-4" />,
+    },
   ];
 
   const inputClass = `w-full px-3.5 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${
@@ -270,13 +282,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Team Role Selector (shown on Sign Up or when completing Profile) */}
+              {/* Department / Team Role Selector (shown on Sign Up or when completing Profile) */}
               {(mode === 'signup' || firebaseUser) && (
                 <div>
                   <label className="block text-xs font-semibold mb-2">
-                    Select Team <span className="text-red-500">*</span>
+                    Select Department / Team <span className="text-red-500">*</span>
                   </label>
-                  <div className="grid grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                     {roleCards.map((card) => {
                       const isSelected = selectedRole === card.id;
                       return (
@@ -284,7 +296,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                           key={card.id}
                           type="button"
                           onClick={() => setSelectedRole(card.id)}
-                          className={`p-3 rounded-lg border text-left transition-all flex items-center gap-2 cursor-pointer ${
+                          className={`p-2.5 rounded-lg border text-left transition-all flex items-center gap-2 cursor-pointer ${
                             isSelected
                               ? darkMode
                                 ? 'border-orange-500 bg-orange-500/10 text-white'
