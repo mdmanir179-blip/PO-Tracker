@@ -81,13 +81,39 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
   initialPo,
   darkMode,
   userRole,
-  catalogItems,
-  existingPos,
+  catalogItems = [],
+  existingPos = [],
 }) => {
   const [values, setValues] = useState<PoFormValues>(DEFAULT_VALUES);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autoMatchedRows, setAutoMatchedRows] = useState<Record<number, boolean>>({});
+
+  // Build suggestions list for Item ID datalist (called unconditionally before early return)
+  const allCatalogSuggestions = React.useMemo(() => {
+    const map = new Map<string, string>();
+    DEFAULT_PRODUCT_CATALOG.forEach((d) => map.set(d.itemId, d.itemName));
+    (existingPos || []).forEach((p) => {
+      if (Array.isArray(p.lineItems)) {
+        p.lineItems.forEach((li) => {
+          if (li.itemId && li.itemName) {
+            map.set(li.itemId.toUpperCase(), li.itemName);
+          }
+        });
+      } else if (p.itemId && p.itemName) {
+        map.set(p.itemId.toUpperCase(), p.itemName);
+      }
+    });
+    (catalogItems || []).forEach((c) => {
+      if (c.itemId && c.itemName) {
+        map.set(c.itemId.toUpperCase(), c.itemName);
+      }
+    });
+    return Array.from(map.entries()).map(([itemId, itemName]) => ({
+      itemId,
+      itemName,
+    }));
+  }, [catalogItems, existingPos]);
 
   useEffect(() => {
     if (initialPo) {
@@ -301,32 +327,6 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
       setIsSaving(false);
     }
   };
-
-  // Build suggestions list for Item ID datalist
-  const allCatalogSuggestions = React.useMemo(() => {
-    const map = new Map<string, string>();
-    DEFAULT_PRODUCT_CATALOG.forEach((d) => map.set(d.itemId, d.itemName));
-    existingPos.forEach((p) => {
-      if (Array.isArray(p.lineItems)) {
-        p.lineItems.forEach((li) => {
-          if (li.itemId && li.itemName) {
-            map.set(li.itemId.toUpperCase(), li.itemName);
-          }
-        });
-      } else if (p.itemId && p.itemName) {
-        map.set(p.itemId.toUpperCase(), p.itemName);
-      }
-    });
-    catalogItems.forEach((c) => {
-      if (c.itemId && c.itemName) {
-        map.set(c.itemId.toUpperCase(), c.itemName);
-      }
-    });
-    return Array.from(map.entries()).map(([itemId, itemName]) => ({
-      itemId,
-      itemName,
-    }));
-  }, [catalogItems, existingPos]);
 
   const inputClass = `w-full px-3 py-2 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-orange-500 ${
     darkMode
