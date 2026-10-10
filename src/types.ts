@@ -1,11 +1,15 @@
 import { Timestamp } from 'firebase/firestore';
 
+export type ThemeMode = 'light' | 'grey' | 'dark';
+
 export type TeamRole = 'admin' | 'backoffice' | 'warehouse' | 'logistics' | 'print';
+
 
 export type WorkflowStage = 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN';
 
 export interface EmployeePermissions {
   canEditPo: boolean;
+  canManageCatalog: boolean;
   canManageLogistics: boolean;
   canVerifyPrint: boolean;
   canManageGrn: boolean;

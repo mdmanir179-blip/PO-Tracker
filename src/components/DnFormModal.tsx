@@ -304,48 +304,6 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
                 className={inputClass}
               />
             </div>
-
-            {/* Upload DN Report */}
-            <div className="sm:col-span-2">
-              <label className={labelClass}>
-                Upload DN Report (Upload 1 supported file: PDF or spreadsheet. Max 10 MB.)
-              </label>
-              <div
-                className={`p-4 rounded-lg border border-dashed flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
-                  darkMode
-                    ? 'border-slate-700 bg-slate-800/50'
-                    : 'border-slate-300 bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <FileText className="w-5 h-5 text-orange-500 shrink-0" />
-                  <div className="text-xs">
-                    {values.reportFileName ? (
-                      <div>
-                        <span className="font-semibold">{values.reportFileName}</span>
-                        <span className="text-slate-500 ml-2 font-mono">
-                          ({(values.reportFileSize / 1024).toFixed(1)} KB)
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-slate-500">
-                        Supported formats: .pdf, .xlsx, .xls, .csv (Max 10 MB)
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <label className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-700 text-white text-xs font-medium cursor-pointer hover:bg-slate-800 flex items-center gap-1.5 shrink-0">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Choose File</span>
-                  <input
-                    type="file"
-                    accept=".pdf,.xlsx,.xls,.csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
-                    onChange={handleFileChange}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-            </div>
           </div>
 
           <div

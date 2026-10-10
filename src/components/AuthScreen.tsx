@@ -7,17 +7,20 @@ import {
   Printer,
   Sun,
   Moon,
+  Monitor,
   ArrowRight,
   AlertCircle,
 } from 'lucide-react';
-import { TeamRole, EmployeeProfile } from '../types';
+import { TeamRole, EmployeeProfile, ThemeMode } from '../types';
 import { AppUser } from '../firebase';
 
 interface AuthScreenProps {
   firebaseUser: AppUser | null;
   existingProfile: EmployeeProfile | null;
-  darkMode: boolean;
-  onToggleDarkMode: () => void;
+  themeMode?: ThemeMode;
+  onChangeThemeMode?: (mode: ThemeMode) => void;
+  darkMode?: boolean;
+  onToggleDarkMode?: () => void;
   onEmailSignUp: (data: {
     employeeName: string;
     employeeId: string;
@@ -41,6 +44,8 @@ interface AuthScreenProps {
 export const AuthScreen: React.FC<AuthScreenProps> = ({
   firebaseUser,
   existingProfile,
+  themeMode = 'light',
+  onChangeThemeMode,
   darkMode,
   onToggleDarkMode,
   onEmailSignUp,
@@ -49,6 +54,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   isSubmitting,
   authError,
 }) => {
+  const effectiveTheme: ThemeMode = themeMode || (darkMode ? 'dark' : 'light');
+  const handleThemeSwitch = (target: ThemeMode) => {
+    if (typeof onChangeThemeMode === 'function') {
+      onChangeThemeMode(target);
+    } else if (typeof onToggleDarkMode === 'function') {
+      onToggleDarkMode();
+    }
+  };
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [selectedRole, setSelectedRole] = useState<TeamRole>(
     existingProfile?.role || 'backoffice'
@@ -60,6 +73,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [email, setEmail] = useState(firebaseUser?.email || '');
   const [password, setPassword] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+
+  const isDark = effectiveTheme === 'dark';
+  const isGrey = effectiveTheme === 'grey';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,53 +179,101 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   ];
 
   const inputClass = `w-full px-3.5 py-2.5 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 ${
-    darkMode
+    isDark
       ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500'
+      : isGrey
+      ? 'bg-zinc-100 border-zinc-400 text-zinc-900 placeholder-zinc-500'
       : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400'
   }`;
 
   return (
     <div
       className={`min-h-screen flex flex-col justify-between transition-colors ${
-        darkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
+        isDark
+          ? 'bg-slate-950 text-slate-100'
+          : isGrey
+          ? 'bg-zinc-200 text-zinc-900'
+          : 'bg-slate-50 text-slate-900'
       }`}
     >
       {/* Top Bar */}
       <header
         className={`flex items-center justify-between px-6 py-4 border-b ${
-          darkMode ? 'border-slate-800 bg-slate-900/60' : 'border-slate-200 bg-white'
+          isDark
+            ? 'border-slate-800 bg-slate-900/60'
+            : isGrey
+            ? 'border-zinc-300 bg-zinc-100'
+            : 'border-slate-200 bg-white'
         }`}
       >
         <div className="text-lg font-bold tracking-tight">Instamart Ops Portal</div>
         <div />
-        <button
-          type="button"
-          onClick={onToggleDarkMode}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium border transition-colors whitespace-nowrap cursor-pointer ${
-            darkMode
-              ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
-              : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
+        <div
+          className={`flex items-center p-1 rounded-lg border ${
+            isDark
+              ? 'border-slate-700 bg-slate-800'
+              : isGrey
+              ? 'border-zinc-400 bg-zinc-200'
+              : 'border-slate-200 bg-slate-100'
           }`}
         >
-          {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
-          <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => handleThemeSwitch('light')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+              effectiveTheme === 'light'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+            }`}
+          >
+            <Sun className="w-3.5 h-3.5 text-amber-500" />
+            <span>Light</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleThemeSwitch('grey')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+              effectiveTheme === 'grey'
+                ? 'bg-zinc-700 text-white shadow-xs'
+                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+            }`}
+          >
+            <Monitor className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Grey</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleThemeSwitch('dark')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+              effectiveTheme === 'dark'
+                ? 'bg-slate-950 text-white shadow-xs'
+                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+            }`}
+          >
+            <Moon className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Dark</span>
+          </button>
+        </div>
       </header>
 
       {/* Main Split Portal */}
       <main className="flex-1 flex items-center justify-center p-6">
         <div
           className={`w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 rounded-xl border overflow-hidden ${
-            darkMode
+            isDark
               ? 'bg-slate-900 border-slate-800'
+              : isGrey
+              ? 'bg-zinc-100 border-zinc-300 shadow-sm'
               : 'bg-white border-slate-200 shadow-sm'
           }`}
         >
           {/* Left Column: ONLY "Unified PO, In-Transit, GRN & Discrepancy Note Control" centered */}
           <div
             className={`lg:col-span-5 p-10 flex items-center justify-center text-center border-b lg:border-b-0 lg:border-r ${
-              darkMode
+              isDark
                 ? 'bg-slate-900/90 border-slate-800'
+                : isGrey
+                ? 'bg-zinc-800 text-white border-zinc-700'
                 : 'bg-slate-900 text-white border-slate-800'
             }`}
           >
@@ -233,8 +297,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
               {!firebaseUser && (
                 <div
                   className={`flex p-1 rounded-lg border ${
-                    darkMode
+                    isDark
                       ? 'bg-slate-800 border-slate-700'
+                      : isGrey
+                      ? 'bg-zinc-200 border-zinc-300'
                       : 'bg-slate-100 border-slate-200'
                   }`}
                 >
@@ -246,7 +312,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     }}
                     className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer ${
                       mode === 'login'
-                        ? darkMode
+                        ? isDark
                           ? 'bg-slate-900 text-white'
                           : 'bg-white text-slate-900 shadow-xs'
                         : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -262,7 +328,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                     }}
                     className={`px-3.5 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer ${
                       mode === 'signup'
-                        ? darkMode
+                        ? isDark
                           ? 'bg-slate-900 text-white'
                           : 'bg-white text-slate-900 shadow-xs'
                         : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -298,11 +364,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
                           onClick={() => setSelectedRole(card.id)}
                           className={`p-2.5 rounded-lg border text-left transition-all flex items-center gap-2 cursor-pointer ${
                             isSelected
-                              ? darkMode
+                              ? isDark
                                 ? 'border-orange-500 bg-orange-500/10 text-white'
                                 : 'border-orange-600 bg-orange-50 text-slate-900'
-                              : darkMode
+                              : isDark
                               ? 'border-slate-800 bg-slate-800/50 text-slate-300 hover:border-slate-700'
+                              : isGrey
+                              ? 'border-zinc-300 bg-zinc-200/70 text-zinc-800 hover:border-zinc-400'
                               : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300'
                           }`}
                         >
