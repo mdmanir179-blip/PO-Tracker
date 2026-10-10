@@ -257,6 +257,47 @@
           "type": "boolean",
           "description": "Whether this GRN has any Discrepancy Note (DN)"
         },
+        "isRto": {
+          "type": "boolean",
+          "description": "Whether this PO has been marked for RTO (Return to Origin)"
+        },
+        "rtoPickedStatus": {
+          "type": "string",
+          "enum": ["YES", "NO", "PENDING"],
+          "maxLength": 20,
+          "description": "Whether RTO shipment has been picked up (YES / NO / PENDING)"
+        },
+        "rtoTrackingId": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "RTO return tracking ID / AWB / LR number"
+        },
+        "rtoCourierPartner": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Logistics / Courier partner handling RTO return"
+        },
+        "rtoPickDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Date when RTO shipment was picked up"
+        },
+        "rtoReceivedAtWh": {
+          "type": "string",
+          "enum": ["YES", "NO"],
+          "maxLength": 10,
+          "description": "Whether RTO shipment has been received back at origin warehouse"
+        },
+        "rtoReason": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Reason for RTO (e.g. Appointment Rejected, Hub Full, PO Expired, Damaged)"
+        },
+        "rtoRemarks": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Additional RTO remarks, vehicle number, or resolution notes"
+        },
         "orgScope": {
           "type": "string",
           "enum": ["instamart_ops"],
@@ -498,7 +539,7 @@
         },
         "module": {
           "type": "string",
-          "enum": ["PO_ENTRY", "IN_TRANSIT", "GRN", "DN_TRACKER", "LOGISTICS", "PRINT_TEAM", "POC_DIRECTORY", "ADMIN_IAM"],
+          "enum": ["PO_ENTRY", "IN_TRANSIT", "RTO_TRACKER", "GRN", "DN_TRACKER", "LOGISTICS", "PRINT_TEAM", "POC_DIRECTORY", "ADMIN_IAM"],
           "maxLength": 30,
           "description": "System module where action occurred"
         },

@@ -77,7 +77,10 @@ service cloud.firestore {
           'pickupTrackingId', 'puc', 'asn', 'clearBagNo', 'comment',
           'pickupStatus', 'printVerified', 'printVerifiedBy',
           'workflowStage', 'inwardStatus', 'grnNumber',
-          'grnDnSummary', 'hasDn', 'orgScope',
+          'grnDnSummary', 'hasDn',
+          'isRto', 'rtoPickedStatus', 'rtoTrackingId', 'rtoCourierPartner',
+          'rtoPickDate', 'rtoReceivedAtWh', 'rtoReason', 'rtoRemarks',
+          'orgScope',
           'createdByUid', 'createdByName', 'createdByEmpId',
           'updatedByUid', 'updatedByName', 'updatedByEmpId',
           'createdAt', 'updatedAt'
@@ -173,7 +176,7 @@ service cloud.firestore {
           'orgScope', 'createdAt'
         ]) &&
         data.action is string && data.action.size() >= 1 && data.action.size() <= 120 &&
-        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'GRN', 'DN_TRACKER', 'LOGISTICS', 'PRINT_TEAM', 'POC_DIRECTORY', 'ADMIN_IAM', 'SHEETS_SYNC'] &&
+        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'RTO_TRACKER', 'GRN', 'DN_TRACKER', 'LOGISTICS', 'PRINT_TEAM', 'POC_DIRECTORY', 'ADMIN_IAM', 'SHEETS_SYNC'] &&
         data.referenceNo is string && data.referenceNo.size() <= 100 &&
         data.details is string && data.details.size() <= 400 &&
         data.employeeUid is string && data.employeeUid.size() <= 128 && data.employeeUid.matches('^[a-zA-Z0-9_\\-]+$') &&

@@ -38,6 +38,7 @@ import {
   Phone,
   Mail,
   Building2,
+  RotateCcw,
 } from 'lucide-react';
 import {
   db,
@@ -180,6 +181,27 @@ export default function App() {
   const [editingEmployee, setEditingEmployee] = useState<EmployeeProfile | null>(null);
 
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
+
+  // RTO Management Modal State (RTO Picked Status, Tracking ID, Courier, Pick Date, Reason, WH Received)
+  const [isRtoModalOpen, setIsRtoModalOpen] = useState(false);
+  const [rtoTargetPo, setRtoTargetPo] = useState<PurchaseOrder | null>(null);
+  const [rtoForm, setRtoForm] = useState<{
+    rtoPickedStatus: 'YES' | 'NO' | 'PENDING';
+    rtoTrackingId: string;
+    rtoCourierPartner: string;
+    rtoPickDate: string;
+    rtoReceivedAtWh: 'YES' | 'NO';
+    rtoReason: string;
+    rtoRemarks: string;
+  }>({
+    rtoPickedStatus: 'PENDING',
+    rtoTrackingId: '',
+    rtoCourierPartner: '',
+    rtoPickDate: new Date().toISOString().slice(0, 10),
+    rtoReceivedAtWh: 'NO',
+    rtoReason: 'Appointment Rejected / WFA Expired',
+    rtoRemarks: '',
+  });
 
   // POC Contact Form Modal State
   const [isPocModalOpen, setIsPocModalOpen] = useState(false);
@@ -1491,6 +1513,146 @@ export default function App() {
     }
   };
 
+  // Open the dedicated RTO Management Modal for a Purchase Order
+  const openRtoModalForPo = (po: PurchaseOrder) => {
+    setRtoTargetPo(po);
+    setRtoForm({
+      rtoPickedStatus: po.rtoPickedStatus || 'PENDING',
+      rtoTrackingId: po.rtoTrackingId || po.pickupTrackingId || '',
+      rtoCourierPartner: po.rtoCourierPartner || po.logisticsPortal || '',
+      rtoPickDate: po.rtoPickDate || new Date().toISOString().slice(0, 10),
+      rtoReceivedAtWh: po.rtoReceivedAtWh || 'NO',
+      rtoReason: po.rtoReason || 'Appointment Rejected / WFA Expired',
+      rtoRemarks: po.rtoRemarks || po.comment || '',
+    });
+    setIsRtoModalOpen(true);
+  };
+
+  // Logistics & Backoffice: Change PO status while in In-Transit (In Transit, Out for Delivered, RTO, WFA, Re-Attempt Scheduled, etc.)
+  const handleChangeInTransitStatus = async (po: PurchaseOrder, newStatus: string) => {
+    if (!firebaseUser || !employeeProfile) return;
+    const isNowRto = newStatus.toUpperCase() === 'RTO' || newStatus.toUpperCase().startsWith('RTO');
+    const poRef = doc(db, 'purchase_orders', po.id);
+
+    try {
+      await updateDoc(poRef, {
+        status: newStatus.slice(0, 60),
+        isRto: isNowRto ? true : Boolean(po.isRto),
+        rtoPickedStatus: isNowRto ? po.rtoPickedStatus || 'PENDING' : po.rtoPickedStatus || 'NO',
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        `In-Transit Status Changed → ${newStatus}`,
+        isNowRto ? 'RTO_TRACKER' : 'IN_TRANSIT',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) changed In-Transit status of PO ${po.poNumber} to "${newStatus}".`
+      );
+      if (isNowRto) {
+        openRtoModalForPo({
+          ...po,
+          status: 'RTO',
+          isRto: true,
+          rtoPickedStatus: po.rtoPickedStatus || 'PENDING',
+        });
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
+  // Save RTO System Details (RTO Picked YES/NO/PENDING, RTO Tracking ID, Courier, Pick Date, Reason, WH Received)
+  const handleSaveRtoDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!firebaseUser || !employeeProfile || !rtoTargetPo) return;
+    const poRef = doc(db, 'purchase_orders', rtoTargetPo.id);
+
+    try {
+      await updateDoc(poRef, {
+        status: 'RTO',
+        isRto: true,
+        rtoPickedStatus: rtoForm.rtoPickedStatus,
+        rtoTrackingId: rtoForm.rtoTrackingId.trim().slice(0, 100),
+        rtoCourierPartner: rtoForm.rtoCourierPartner.trim().slice(0, 100),
+        rtoPickDate: rtoForm.rtoPickDate.trim().slice(0, 30),
+        rtoReceivedAtWh: rtoForm.rtoReceivedAtWh,
+        rtoReason: rtoForm.rtoReason.trim().slice(0, 200),
+        rtoRemarks: rtoForm.rtoRemarks.trim().slice(0, 500),
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        `Updated RTO Tracking & Pickup Status (Picked: ${rtoForm.rtoPickedStatus})`,
+        'RTO_TRACKER',
+        rtoTargetPo.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated RTO for PO ${rtoTargetPo.poNumber} — Picked: ${rtoForm.rtoPickedStatus}, Tracking ID: ${rtoForm.rtoTrackingId || 'N/A'}, Courier: ${rtoForm.rtoCourierPartner || 'N/A'}, Received at WH: ${rtoForm.rtoReceivedAtWh}.`
+      );
+      setIsRtoModalOpen(false);
+      setRtoTargetPo(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${rtoTargetPo.id}`);
+    }
+  };
+
+  // Quick toggle RTO Picked Status (YES / NO / PENDING) directly from RTO table
+  const handleQuickToggleRtoPicked = async (
+    po: PurchaseOrder,
+    nextPicked: 'YES' | 'NO' | 'PENDING'
+  ) => {
+    if (!firebaseUser || !employeeProfile) return;
+    const poRef = doc(db, 'purchase_orders', po.id);
+    try {
+      await updateDoc(poRef, {
+        isRto: true,
+        status: 'RTO',
+        rtoPickedStatus: nextPicked,
+        rtoPickDate:
+          nextPicked === 'YES' && !po.rtoPickDate
+            ? new Date().toISOString().slice(0, 10)
+            : po.rtoPickDate || '',
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        `RTO Pickup Status → ${nextPicked}`,
+        'RTO_TRACKER',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked RTO Picked = ${nextPicked} for PO ${po.poNumber}.`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
+  // Quick toggle RTO Received back at Origin Warehouse (YES / NO)
+  const handleQuickToggleRtoWhReceived = async (po: PurchaseOrder, received: 'YES' | 'NO') => {
+    if (!firebaseUser || !employeeProfile) return;
+    const poRef = doc(db, 'purchase_orders', po.id);
+    try {
+      await updateDoc(poRef, {
+        rtoReceivedAtWh: received,
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        `RTO Origin WH Received → ${received}`,
+        'RTO_TRACKER',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked RTO Received at Origin WH = ${received} for PO ${po.poNumber}.`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
   // Admin delete PO with confirmation dialog
   const requestDeletePo = (po: PurchaseOrder) => {
     setConfirmState({
@@ -1538,7 +1700,8 @@ export default function App() {
           po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
           po.itemId.toLowerCase().includes(searchQuery.toLowerCase()) ||
           (po.logisticsPortal || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (po.pickupTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase())
+          (po.pickupTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (po.rtoTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase())
       ),
     [purchaseOrders, searchQuery]
   );
@@ -1551,7 +1714,26 @@ export default function App() {
           (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
             po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
             po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.pickupTrackingId.toLowerCase().includes(searchQuery.toLowerCase()))
+            po.pickupTrackingId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (po.rtoTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (po.status || '').toLowerCase().includes(searchQuery.toLowerCase()))
+      ),
+    [purchaseOrders, searchQuery]
+  );
+
+  const rtoList = useMemo(
+    () =>
+      purchaseOrders.filter(
+        (po) =>
+          (po.isRto === true ||
+            (po.status || '').toUpperCase() === 'RTO' ||
+            (po.status || '').toUpperCase().startsWith('RTO')) &&
+          (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.pickupTrackingId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (po.rtoTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (po.rtoReason || '').toLowerCase().includes(searchQuery.toLowerCase()))
       ),
     [purchaseOrders, searchQuery]
   );
@@ -1717,6 +1899,11 @@ export default function App() {
       id: 'IN_TRANSIT',
       label: `02. In Transit (${purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT').length})`,
       shortLabel: `In Transit (${purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT').length})`,
+    },
+    {
+      id: 'RTO_TRACKER',
+      label: `RTO Management (${rtoList.length})`,
+      shortLabel: `RTO (${rtoList.length})`,
     },
     {
       id: 'GRN',

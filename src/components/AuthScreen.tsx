@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { TeamRole, EmployeeProfile, ThemeMode } from '../types';
 import { AppUser } from '../firebase';
+import { BrandLogo } from './BrandLogo';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface AuthScreenProps {
   firebaseUser: AppUser | null;
@@ -198,88 +200,112 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     >
       {/* Top Bar */}
       <header
-        className={`flex items-center justify-between px-6 py-4 border-b ${
+        className={`flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3.5 border-b ${
           isDark
-            ? 'border-slate-800 bg-slate-900/60'
+            ? 'border-slate-800 bg-slate-900/80'
             : isGrey
             ? 'border-zinc-300 bg-zinc-100'
             : 'border-slate-200 bg-white'
         }`}
       >
-        <div className="text-lg font-bold tracking-tight">Instamart Ops Portal</div>
-        <div />
-        <div
-          className={`flex items-center p-1 rounded-lg border ${
-            isDark
-              ? 'border-slate-700 bg-slate-800'
-              : isGrey
-              ? 'border-zinc-400 bg-zinc-200'
-              : 'border-slate-200 bg-slate-100'
-          }`}
-        >
-          <button
-            type="button"
-            onClick={() => handleThemeSwitch('light')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
-              effectiveTheme === 'light'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+        <BrandLogo size="md" showSubtitle subtitleText="Supply Chain & Dispatch Control" />
+        <div className="flex items-center gap-2.5">
+          <PWAInstallButton darkMode={isDark} />
+          <div
+            className={`flex items-center p-1 rounded-lg border ${
+              isDark
+                ? 'border-slate-700 bg-slate-800'
+                : isGrey
+                ? 'border-zinc-400 bg-zinc-200'
+                : 'border-slate-200 bg-slate-100'
             }`}
           >
-            <Sun className="w-3.5 h-3.5 text-amber-500" />
-            <span>Light</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleThemeSwitch('grey')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
-              effectiveTheme === 'grey'
-                ? 'bg-zinc-700 text-white shadow-xs'
-                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
-            }`}
-          >
-            <Monitor className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Grey</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleThemeSwitch('dark')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
-              effectiveTheme === 'dark'
-                ? 'bg-slate-950 text-white shadow-xs'
-                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
-            }`}
-          >
-            <Moon className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Dark</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => handleThemeSwitch('light')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                effectiveTheme === 'light'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              }`}
+            >
+              <Sun className="w-3.5 h-3.5 text-amber-500" />
+              <span>Light</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleThemeSwitch('grey')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                effectiveTheme === 'grey'
+                  ? 'bg-zinc-700 text-white shadow-xs'
+                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              }`}
+            >
+              <Monitor className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Grey</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleThemeSwitch('dark')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                effectiveTheme === 'dark'
+                  ? 'bg-slate-950 text-white shadow-xs'
+                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              }`}
+            >
+              <Moon className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Dark</span>
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Main Split Portal */}
-      <main className="flex-1 flex items-center justify-center p-6">
+      <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
         <div
-          className={`w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 rounded-xl border overflow-hidden ${
+          className={`w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 rounded-2xl border overflow-hidden shadow-lg ${
             isDark
               ? 'bg-slate-900 border-slate-800'
               : isGrey
-              ? 'bg-zinc-100 border-zinc-300 shadow-sm'
-              : 'bg-white border-slate-200 shadow-sm'
+              ? 'bg-zinc-100 border-zinc-300'
+              : 'bg-white border-slate-200'
           }`}
         >
-          {/* Left Column: ONLY "Unified PO, In-Transit, GRN & Discrepancy Note Control" centered */}
+          {/* Left Column: Brand Logo + Headline */}
           <div
-            className={`lg:col-span-5 p-10 flex items-center justify-center text-center border-b lg:border-b-0 lg:border-r ${
+            className={`lg:col-span-5 p-8 sm:p-10 flex flex-col items-center justify-center text-center gap-5 border-b lg:border-b-0 lg:border-r ${
               isDark
-                ? 'bg-slate-900/90 border-slate-800'
+                ? 'bg-gradient-to-br from-slate-900 via-slate-900 to-orange-950/40 border-slate-800'
                 : isGrey
                 ? 'bg-zinc-800 text-white border-zinc-700'
-                : 'bg-slate-900 text-white border-slate-800'
+                : 'bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 text-white border-slate-800'
             }`}
           >
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-white max-w-sm mx-auto">
-              Unified PO, In-Transit, GRN & Discrepancy Note Control
-            </h1>
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-600 via-orange-500 to-amber-500 p-1 shadow-lg flex items-center justify-center">
+              <svg
+                viewBox="0 0 64 64"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="w-12 h-12"
+              >
+                <path d="M32 10L52 21L32 32L12 21L32 10Z" fill="#FFFFFF" />
+                <path d="M12 21L32 32V54L12 43V21Z" fill="#FFEDD5" />
+                <path d="M52 21L32 32V54L52 43V21Z" fill="#FED7AA" />
+                <path d="M35 15L25 27H33L29 38L41 25H33L35 15Z" fill="#EA580C" />
+                <circle cx="49" cy="15" r="5" fill="#10B981" stroke="#FFFFFF" strokeWidth="2" />
+              </svg>
+            </div>
+            <div className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-widest text-orange-400">
+                Instamart OpsHub Enterprise
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-white max-w-sm mx-auto">
+                Unified PO, In-Transit, RTO, GRN & Discrepancy Note Control
+              </h1>
+              <p className="text-xs text-slate-300 max-w-xs mx-auto pt-1">
+                Available as Mobile App (Android / iOS) & Computer App (Windows / Mac)
+              </p>
+            </div>
           </div>
 
           {/* Right Column: Login / Signup Form */}

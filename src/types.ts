@@ -77,6 +77,15 @@ export interface PurchaseOrder {
   grnNumber: string;
   grnDnSummary: string;
   hasDn: boolean;
+  // RTO Management System Fields
+  isRto?: boolean;
+  rtoPickedStatus?: 'YES' | 'NO' | 'PENDING';
+  rtoTrackingId?: string;
+  rtoCourierPartner?: string;
+  rtoPickDate?: string;
+  rtoReceivedAtWh?: 'YES' | 'NO';
+  rtoReason?: string;
+  rtoRemarks?: string;
   orgScope: 'instamart_ops';
   createdByUid: string;
   createdByName: string;
@@ -132,6 +141,7 @@ export interface ActivityLog {
   module:
     | 'PO_ENTRY'
     | 'IN_TRANSIT'
+    | 'RTO_TRACKER'
     | 'GRN'
     | 'DN_TRACKER'
     | 'LOGISTICS'
@@ -155,6 +165,7 @@ export type ActiveTab =
   | 'LOGISTICS'
   | 'PRINT_TEAM'
   | 'IN_TRANSIT'
+  | 'RTO_TRACKER'
   | 'GRN'
   | 'DN_TRACKER'
   | 'POC_DIRECTORY'

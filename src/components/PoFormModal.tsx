@@ -656,6 +656,11 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
                 <option value="Packed">Packed</option>
                 <option value="Ready for Dispatch">Ready for Dispatch</option>
                 <option value="Dispatched">Dispatched</option>
+                <option value="In Transit">In Transit</option>
+                <option value="Out for Delivered">Out for Delivered</option>
+                <option value="WFA">WFA (Waiting for Appointment)</option>
+                <option value="RTO">RTO (Return to Origin)</option>
+                <option value="Re-Attempt Scheduled">Re-Attempt Scheduled</option>
                 <option value="On Hold">On Hold</option>
               </select>
             </div>
