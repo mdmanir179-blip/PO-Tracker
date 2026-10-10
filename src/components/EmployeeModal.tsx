@@ -52,9 +52,9 @@ export function getDefaultPermissionsForRole(role: TeamRole): EmployeePermission
     case 'backoffice':
       return {
         canEditPo: true,
-        canManageCatalog: false,
+        canManageCatalog: true,
         canManageLogistics: true,
-        canVerifyPrint: false,
+        canVerifyPrint: true,
         canManageGrn: true,
         canManageDn: true,
       };
@@ -65,7 +65,7 @@ export function getDefaultPermissionsForRole(role: TeamRole): EmployeePermission
         canManageLogistics: true,
         canVerifyPrint: false,
         canManageGrn: false,
-        canManageDn: false,
+        canManageDn: true,
       };
     case 'print':
       return {

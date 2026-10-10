@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Upload, FileText, Save, AlertCircle } from 'lucide-react';
-import { DnRecord, PurchaseOrder } from '../types';
+import { X, Save, AlertCircle, Truck } from 'lucide-react';
+import { DnRecord, PurchaseOrder, PocContact } from '../types';
 
 export interface DnFormValues {
   dnDate: string;
@@ -23,6 +23,8 @@ interface DnFormModalProps {
   onSave: (values: DnFormValues) => Promise<void>;
   initialDn: DnRecord | null;
   prefillFromPo: PurchaseOrder | null;
+  purchaseOrders?: PurchaseOrder[];
+  pocContacts?: PocContact[];
   darkMode: boolean;
 }
 
@@ -47,6 +49,8 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
   onSave,
   initialDn,
   prefillFromPo,
+  purchaseOrders = [],
+  pocContacts = [],
   darkMode,
 }) => {
   const [values, setValues] = useState<DnFormValues>(DEFAULT_DN);
@@ -70,12 +74,23 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
         reportFileDataUrl: initialDn.reportFileDataUrl,
       });
     } else if (prefillFromPo) {
+      const matchedPoc = pocContacts.find(
+        (c) =>
+          c.facilityName.toLowerCase().trim() ===
+          prefillFromPo.warehouseName.toLowerCase().trim()
+      );
       setValues({
         ...DEFAULT_DN,
         dnDate: new Date().toISOString().slice(0, 10),
+        dnNumber: `DN-${prefillFromPo.poNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`,
         facilityName: prefillFromPo.warehouseName,
-        parentPoDetails: `${prefillFromPo.poNumber} | Inv: ${prefillFromPo.invoiceNo || 'N/A'} | GRN: ${prefillFromPo.grnNumber || 'Pending'}`,
+        parentPoDetails: `${prefillFromPo.poNumber} | Inv: ${prefillFromPo.invoiceNo || 'N/A'} | Stage: ${prefillFromPo.workflowStage}`,
         dnSkuIdItemName: `${prefillFromPo.itemId} | ${prefillFromPo.itemName}`,
+        dnQty: Number(prefillFromPo.totalQty) || 0,
+        lrNo: prefillFromPo.pickupTrackingId || prefillFromPo.asn || '',
+        whPocDetails: matchedPoc
+          ? `${matchedPoc.pocName} · ${matchedPoc.contactNumber} · ${matchedPoc.emailId}`
+          : '',
       });
     } else {
       setValues({
@@ -84,9 +99,31 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
       });
     }
     setError(null);
-  }, [initialDn, prefillFromPo, isOpen]);
+  }, [initialDn, prefillFromPo, isOpen, pocContacts]);
 
   if (!isOpen) return null;
+
+  const handleSelectPoForAutoFill = (poId: string) => {
+    const selectedPo = purchaseOrders.find((p) => p.id === poId);
+    if (!selectedPo) return;
+    const matchedPoc = pocContacts.find(
+      (c) =>
+        c.facilityName.toLowerCase().trim() ===
+        selectedPo.warehouseName.toLowerCase().trim()
+    );
+    setValues((prev) => ({
+      ...prev,
+      dnNumber: prev.dnNumber || `DN-${selectedPo.poNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`,
+      facilityName: selectedPo.warehouseName,
+      parentPoDetails: `${selectedPo.poNumber} | Inv: ${selectedPo.invoiceNo || 'N/A'} | Stage: ${selectedPo.workflowStage}`,
+      dnSkuIdItemName: `${selectedPo.itemId} | ${selectedPo.itemName}`,
+      dnQty: Number(selectedPo.totalQty) || 0,
+      lrNo: selectedPo.pickupTrackingId || selectedPo.asn || prev.lrNo,
+      whPocDetails: matchedPoc
+        ? `${matchedPoc.pocName} · ${matchedPoc.contactNumber} · ${matchedPoc.emailId}`
+        : prev.whPocDetails,
+    }));
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -198,6 +235,39 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
             <div className="p-3 rounded-lg border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {!initialDn && purchaseOrders.length > 0 && (
+            <div
+              className={`p-3 rounded-lg border ${
+                darkMode
+                  ? 'bg-slate-950/60 border-slate-800'
+                  : 'bg-orange-50/70 border-orange-200'
+              }`}
+            >
+              <label className="block text-xs font-bold text-orange-600 dark:text-orange-400 mb-1.5 flex items-center gap-1.5">
+                <Truck className="w-3.5 h-3.5" />
+                <span>
+                  Quick Auto-Fill Product & Facility from In-Transit / Active PO:
+                </span>
+              </label>
+              <select
+                defaultValue=""
+                onChange={(e) => handleSelectPoForAutoFill(e.target.value)}
+                className={inputClass}
+              >
+                <option value="">
+                  -- Select In-Transit or Active PO to Auto-Fill Product & Details --
+                </option>
+                {purchaseOrders
+                  .filter((p) => p.workflowStage === 'IN_TRANSIT' || p.workflowStage === 'GRN' || p.workflowStage === 'PO_ENTRY')
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      [{p.workflowStage}] {p.poNumber} — {p.warehouseName} — {p.itemId} | {p.itemName} (Qty: {p.totalQty})
+                    </option>
+                  ))}
+              </select>
             </div>
           )}
 

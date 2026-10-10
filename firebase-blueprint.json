@@ -498,7 +498,7 @@
         },
         "module": {
           "type": "string",
-          "enum": ["PO_ENTRY", "IN_TRANSIT", "GRN", "DN_TRACKER", "LOGISTICS", "PRINT_TEAM", "ADMIN_IAM"],
+          "enum": ["PO_ENTRY", "IN_TRANSIT", "GRN", "DN_TRACKER", "LOGISTICS", "PRINT_TEAM", "POC_DIRECTORY", "ADMIN_IAM"],
           "maxLength": 30,
           "description": "System module where action occurred"
         },
@@ -560,6 +560,73 @@
         "orgScope",
         "createdAt"
       ]
+    },
+    "PocContact": {
+      "title": "PocContact",
+      "description": "Instamart Warehouse / Hub POC Team Contact Directory entry with contact number and email ID.",
+      "type": "object",
+      "properties": {
+        "facilityName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Instamart Facility or Warehouse Name"
+        },
+        "pocName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "POC Person Full Name"
+        },
+        "designation": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "POC Team Role or Designation"
+        },
+        "contactNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "description": "POC Phone / Mobile Contact Number"
+        },
+        "emailId": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "POC Email ID"
+        },
+        "cityOrHub": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "City or Region Hub"
+        },
+        "orgScope": {
+          "type": "string",
+          "enum": ["instamart_ops"],
+          "maxLength": 30,
+          "description": "Organizational partition scope"
+        },
+        "updatedByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Employee who added/updated the POC contact"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp"
+        }
+      },
+      "required": [
+        "facilityName",
+        "pocName",
+        "designation",
+        "contactNumber",
+        "emailId",
+        "cityOrHub",
+        "orgScope",
+        "updatedByName",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -578,6 +645,10 @@
     "/dn_records/{dnId}": {
       "schema": { "$ref": "#/entities/DnRecord" },
       "description": "Instamart Discrepancy Note (DN) Tracker records."
+    },
+    "/poc_contacts/{pocId}": {
+      "schema": { "$ref": "#/entities/PocContact" },
+      "description": "Instamart POC Team Contact Directory with Phone Numbers and Email IDs."
     },
     "/activity_logs/{logId}": {
       "schema": { "$ref": "#/entities/ActivityLog" },

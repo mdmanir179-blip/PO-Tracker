@@ -113,6 +113,19 @@ export interface DnRecord {
   updatedAt?: Timestamp | Date | string;
 }
 
+export interface PocContact {
+  id: string;
+  facilityName: string;
+  pocName: string;
+  designation: string;
+  contactNumber: string;
+  emailId: string;
+  cityOrHub: string;
+  orgScope: 'instamart_ops';
+  updatedByName: string;
+  updatedAt?: Timestamp | Date | string;
+}
+
 export interface ActivityLog {
   id: string;
   action: string;
@@ -123,6 +136,7 @@ export interface ActivityLog {
     | 'DN_TRACKER'
     | 'LOGISTICS'
     | 'PRINT_TEAM'
+    | 'POC_DIRECTORY'
     | 'ADMIN_IAM'
     | 'SHEETS_SYNC';
   referenceNo: string;
@@ -143,4 +157,5 @@ export type ActiveTab =
   | 'IN_TRANSIT'
   | 'GRN'
   | 'DN_TRACKER'
+  | 'POC_DIRECTORY'
   | 'ADMIN_AUDIT';

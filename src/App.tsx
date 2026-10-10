@@ -35,6 +35,9 @@ import {
   ShieldCheck,
   Clock,
   AlertTriangle,
+  Phone,
+  Mail,
+  Building2,
 } from 'lucide-react';
 import {
   db,
@@ -51,6 +54,7 @@ import {
   TeamRole,
   EmployeeProfile,
   ProductCatalogItem,
+  PocContact,
   PurchaseOrder,
   DnRecord,
   ActivityLog,
@@ -158,6 +162,7 @@ export default function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [employeesList, setEmployeesList] = useState<EmployeeProfile[]>([]);
   const [catalogItems, setCatalogItems] = useState<ProductCatalogItem[]>([]);
+  const [pocContacts, setPocContacts] = useState<PocContact[]>([]);
 
   // Modals state
   const [isPoModalOpen, setIsPoModalOpen] = useState(false);
@@ -176,9 +181,17 @@ export default function App() {
 
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
 
-  const [excelStatus, setExcelStatus] = useState<string | null>(null);
-  const poExcelInputRef = useRef<HTMLInputElement>(null);
-  const dnExcelInputRef = useRef<HTMLInputElement>(null);
+  // POC Contact Form Modal State
+  const [isPocModalOpen, setIsPocModalOpen] = useState(false);
+  const [editingPoc, setEditingPoc] = useState<PocContact | null>(null);
+  const [pocForm, setPocForm] = useState({
+    facilityName: '',
+    pocName: '',
+    designation: 'Warehouse / Facility POC',
+    contactNumber: '',
+    emailId: '',
+    cityOrHub: '',
+  });
 
   const [confirmState, setConfirmState] = useState<{
     isOpen: boolean;
@@ -205,7 +218,7 @@ export default function App() {
           const snap = await getDoc(docRef);
           if (snap.exists()) {
             const prof = snap.data() as EmployeeProfile;
-            setEmployeeProfile(prof);
+            setEmployeeProfile({ ...prof, uid: user.uid });
             if (!prof.orgScope) {
               await updateDoc(docRef, {
                 orgScope: 'instamart_ops',
@@ -293,9 +306,52 @@ export default function App() {
           uid: d.id,
         }));
         setEmployeesList(list);
-        const myUpdated = list.find((e) => e.uid === firebaseUser.uid);
-        if (myUpdated) {
-          setEmployeeProfile(myUpdated);
+
+        // Sync active employee profile & permissions from Admin updates (match by UID, or fallback by Email / Employee ID if Admin pre-created a record)
+        const byUid = list.find((e) => e.uid === firebaseUser.uid);
+        const byEmailOrEmpId = list.find(
+          (e) =>
+            e.uid !== firebaseUser.uid &&
+            ((firebaseUser.email &&
+              e.email &&
+              e.email.trim().toLowerCase() === firebaseUser.email.trim().toLowerCase()) ||
+              (employeeProfile?.employeeId &&
+                e.employeeId &&
+                e.employeeId.trim().toLowerCase() ===
+                  employeeProfile.employeeId.trim().toLowerCase()))
+        );
+
+        // Prefer Admin-modified profile permissions if an admin pre-created entry exists with newer permissions
+        const matchedSource = byEmailOrEmpId || byUid;
+        if (matchedSource) {
+          const mergedProfile: EmployeeProfile = {
+            ...(byUid || matchedSource),
+            uid: firebaseUser.uid,
+            role: matchedSource.role,
+            accessStatus: matchedSource.accessStatus || 'APPROVED',
+            permissions: {
+              ...getDefaultPermissionsForRole(matchedSource.role),
+              ...(byUid?.permissions || {}),
+              ...(matchedSource.permissions || {}),
+            },
+          };
+          setEmployeeProfile(mergedProfile);
+
+          // If Admin updated a pre-created record (emp_...), automatically sync those permissions onto the user's real UID doc and clean up duplicate
+          if (byEmailOrEmpId && byEmailOrEmpId.uid.startsWith('emp_')) {
+            setDoc(
+              doc(db, 'employees', firebaseUser.uid),
+              {
+                ...mergedProfile,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            )
+              .then(() => {
+                deleteDoc(doc(db, 'employees', byEmailOrEmpId.uid)).catch(() => {});
+              })
+              .catch(() => {});
+          }
         }
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'employees')
@@ -317,12 +373,29 @@ export default function App() {
       (err) => handleFirestoreError(err, OperationType.LIST, 'product_catalog')
     );
 
+    const pocQuery = query(
+      collection(db, 'poc_contacts'),
+      where('orgScope', '==', 'instamart_ops')
+    );
+    const unsubPoc = onSnapshot(
+      pocQuery,
+      (snap) => {
+        const list: PocContact[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<PocContact, 'id'>),
+        }));
+        setPocContacts(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'poc_contacts')
+    );
+
     return () => {
       unsubPo();
       unsubDn();
       unsubLogs();
       unsubEmp();
       unsubCat();
+      unsubPoc();
     };
   }, [authReady, firebaseUser, employeeProfile?.uid]);
 
@@ -412,7 +485,7 @@ export default function App() {
       const docRef = doc(db, 'employees', user.uid);
       const snap = await getDoc(docRef);
       if (snap.exists()) {
-        setEmployeeProfile(snap.data() as EmployeeProfile);
+        setEmployeeProfile({ ...(snap.data() as EmployeeProfile), uid: user.uid });
       }
     } catch (err: any) {
       setAuthError(err?.message || 'Login failed. Please check your Email ID and Password.');
@@ -481,6 +554,7 @@ export default function App() {
   const canManageCatalog = Boolean(
     employeeProfile &&
       (employeeProfile.role === 'admin' ||
+        employeeProfile.role === 'backoffice' ||
         employeeProfile.permissions?.canManageCatalog === true)
   );
 
@@ -534,10 +608,75 @@ export default function App() {
     }
   };
 
-  // Admin: Create or Edit Employee & Permissions
+  // Save or Update Instamart POC Team Contact
+  const handleSavePocContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!firebaseUser || !employeeProfile) return;
+    if (!pocForm.facilityName.trim() || !pocForm.pocName.trim() || !pocForm.contactNumber.trim()) {
+      return;
+    }
+
+    const pocId = editingPoc ? editingPoc.id : generateSafeId('poc');
+    try {
+      await setDoc(doc(db, 'poc_contacts', pocId), {
+        facilityName: pocForm.facilityName.trim().slice(0, 120),
+        pocName: pocForm.pocName.trim().slice(0, 120),
+        designation: (pocForm.designation || 'Warehouse / Facility POC').trim().slice(0, 100),
+        contactNumber: pocForm.contactNumber.trim().slice(0, 60),
+        emailId: pocForm.emailId.trim().slice(0, 120),
+        cityOrHub: pocForm.cityOrHub.trim().slice(0, 100),
+        orgScope: 'instamart_ops',
+        updatedByName: `${employeeProfile.employeeName} (${employeeProfile.employeeId})`.slice(
+          0,
+          100
+        ),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        editingPoc ? 'Updated Instamart POC Contact' : 'Added Instamart POC Contact',
+        'POC_DIRECTORY',
+        pocForm.facilityName.trim(),
+        `${employeeProfile.employeeName} saved POC ${pocForm.pocName.trim()} (${pocForm.contactNumber.trim()}, ${pocForm.emailId.trim()}) for ${pocForm.facilityName.trim()}.`
+      );
+      setIsPocModalOpen(false);
+      setEditingPoc(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `poc_contacts/${pocId}`);
+    }
+  };
+
+  const handleDeletePocContact = async (poc: PocContact) => {
+    if (!firebaseUser || !employeeProfile) return;
+    try {
+      await deleteDoc(doc(db, 'poc_contacts', poc.id));
+      await recordActivity(
+        'Removed Instamart POC Contact',
+        'POC_DIRECTORY',
+        poc.facilityName,
+        `${employeeProfile.employeeName} removed POC ${poc.pocName} (${poc.facilityName}).`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `poc_contacts/${poc.id}`);
+    }
+  };
+
+  // Admin: Create or Edit Employee & Permissions (also updates any matching email/employeeId record)
   const handleSaveEmployee = async (values: EmployeeFormValues) => {
     if (!firebaseUser || !employeeProfile || employeeProfile.role !== 'admin') return;
+    // Check if an existing employee already matches by email or employeeId so we update the real user UID document directly
+    const existingMatched = employeesList.find(
+      (e) =>
+        (values.uid && e.uid === values.uid) ||
+        (values.email.trim() &&
+          e.email &&
+          e.email.trim().toLowerCase() === values.email.trim().toLowerCase()) ||
+        (values.employeeId.trim() &&
+          e.employeeId &&
+          e.employeeId.trim().toLowerCase() === values.employeeId.trim().toLowerCase())
+    );
+
     const targetUid =
+      existingMatched?.uid ||
       values.uid ||
       `emp_${values.employeeId.replace(/[^a-zA-Z0-9_-]/g, '')}_${Date.now()}`;
     const empRef = doc(db, 'employees', targetUid);
@@ -577,9 +716,7 @@ export default function App() {
           : 'Admin Created New Employee Profile',
         'ADMIN_IAM',
         values.employeeId,
-        `Admin ${employeeProfile.employeeName} updated ${values.employeeName} (${values.employeeId}) → Dept: ${values.role.toUpperCase()}, Status: ${values.accessStatus}, Catalog Access: ${
-          values.permissions.canManageCatalog ? 'YES' : 'NO'
-        }.`
+        `Admin ${employeeProfile.employeeName} updated ${values.employeeName} (${values.employeeId}) → Dept: ${values.role.toUpperCase()}, Status: ${values.accessStatus}.`
       );
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `employees/${targetUid}`);
@@ -1256,6 +1393,19 @@ export default function App() {
     [activityLogs, searchQuery]
   );
 
+  const filteredPocList = useMemo(
+    () =>
+      pocContacts.filter(
+        (p) =>
+          p.facilityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          p.pocName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          p.contactNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          p.emailId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (p.cityOrHub || '').toLowerCase().includes(searchQuery.toLowerCase())
+      ),
+    [pocContacts, searchQuery]
+  );
+
   const expiringPoCount = useMemo(
     () =>
       purchaseOrders.filter((po) => {
@@ -1299,16 +1449,34 @@ export default function App() {
   }
 
   const isAdmin = employeeProfile.role === 'admin';
+  const isBackoffice = employeeProfile.role === 'backoffice';
   const isRestricted = employeeProfile.accessStatus === 'RESTRICTED' && !isAdmin;
   const effectivePerms = {
     ...getDefaultPermissionsForRole(employeeProfile.role),
     ...(employeeProfile.permissions || {}),
   };
-  const canUserEditPo = !isRestricted && (isAdmin || effectivePerms.canEditPo);
-  const canUserManageLogistics = !isRestricted && (isAdmin || effectivePerms.canManageLogistics);
-  const canUserVerifyPrint = !isRestricted && (isAdmin || effectivePerms.canVerifyPrint);
-  const canUserManageGrn = !isRestricted && (isAdmin || effectivePerms.canManageGrn);
-  const canUserManageDn = !isRestricted && (isAdmin || effectivePerms.canManageDn);
+  const canUserEditPo = !isRestricted && (isAdmin || isBackoffice || effectivePerms.canEditPo);
+  const canUserManageLogistics =
+    !isRestricted && (isAdmin || isBackoffice || effectivePerms.canManageLogistics);
+  const canUserVerifyPrint =
+    !isRestricted && (isAdmin || isBackoffice || effectivePerms.canVerifyPrint);
+  const canUserManageGrn =
+    !isRestricted && (isAdmin || isBackoffice || effectivePerms.canManageGrn);
+  const canUserManageDn =
+    !isRestricted &&
+    (isAdmin ||
+      isBackoffice ||
+      effectivePerms.canManageDn ||
+      effectivePerms.canManageLogistics);
+
+  const activePermissionBadges = [
+    { key: 'canEditPo', label: 'PO Entry', enabled: canUserEditPo },
+    { key: 'canManageCatalog', label: 'SKU Master', enabled: canManageCatalog },
+    { key: 'canManageLogistics', label: 'Logistics & Delivery', enabled: canUserManageLogistics },
+    { key: 'canVerifyPrint', label: 'Print Verify', enabled: canUserVerifyPrint },
+    { key: 'canManageGrn', label: 'GRN Inward', enabled: canUserManageGrn },
+    { key: 'canManageDn', label: 'DN Notes', enabled: canUserManageDn },
+  ];
 
   const formattedLiveDate = nowTime.toLocaleDateString('en-IN', {
     weekday: 'short',
@@ -1336,8 +1504,8 @@ export default function App() {
     },
     {
       id: 'LOGISTICS',
-      label: `Logistics (${purchaseOrders.filter((p) => p.workflowStage !== 'GRN').length})`,
-      shortLabel: 'Logistics',
+      label: `Logistics & Delivery (${purchaseOrders.length})`,
+      shortLabel: `Logistics (${purchaseOrders.length})`,
     },
     {
       id: 'PRINT_TEAM',
@@ -1358,6 +1526,11 @@ export default function App() {
       id: 'DN_TRACKER',
       label: `04. DN Tracker (${dnRecords.length})`,
       shortLabel: `DN (${dnRecords.length})`,
+    },
+    {
+      id: 'POC_DIRECTORY',
+      label: `Instamart POC Team (${pocContacts.length})`,
+      shortLabel: `POC Team (${pocContacts.length})`,
     },
     {
       id: 'ADMIN_AUDIT',
@@ -1531,7 +1704,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Responsive Sub-Header: Employee Identity + Scrollable Navigation Bar on <2xl screens */}
+      {/* Responsive Sub-Header: Employee Identity + Live Active Permissions + Scrollable Navigation Bar */}
       <div
         className={`w-full px-3 sm:px-5 lg:px-6 py-2.5 border-b flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 text-xs ${
           darkMode
@@ -1541,7 +1714,7 @@ export default function App() {
             : 'bg-slate-100/80 border-slate-200 text-slate-600'
         }`}
       >
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <span>Active Employee:</span>
           <strong className={darkMode ? 'text-white' : 'text-slate-900'}>
             {employeeProfile.employeeName}
@@ -1560,11 +1733,32 @@ export default function App() {
               MASTER ADMIN CONTROLLER
             </span>
           )}
+          {isBackoffice && (
+            <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
+              BACKOFFICE FULL ACCESS
+            </span>
+          )}
           {isRestricted && (
             <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-600 dark:text-red-400 font-bold">
               RESTRICTED (Read-Only)
             </span>
           )}
+          <span className="hidden sm:inline text-slate-400">|</span>
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[11px] text-slate-500">Active Panel Permissions:</span>
+            {activePermissionBadges.map((b) => (
+              <span
+                key={b.key}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  b.enabled
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                    : 'bg-slate-200/70 dark:bg-slate-800 text-slate-400 line-through'
+                }`}
+              >
+                {b.label}
+              </span>
+            ))}
+          </div>
           <span className="md:hidden font-mono font-semibold text-orange-600 dark:text-orange-400 ml-auto">
             {formattedLiveDate} | {formattedLiveTime}
           </span>
@@ -1623,7 +1817,7 @@ export default function App() {
               {purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT').length}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
-              Locked for Staff · Admin Editable
+              Full Backoffice & Admin Access · Auto-Synced to DN
             </div>
           </div>
 
@@ -1683,7 +1877,7 @@ export default function App() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by PO Number, Warehouse, Item SKU, DN No, LR No, or Employee..."
+              placeholder="Search by PO Number, Warehouse, Item SKU, DN No, LR No, POC Name, or Employee..."
               className={`w-full pl-9 pr-4 py-2 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-orange-500 ${
                 darkMode
                   ? 'bg-slate-900 border-slate-800 text-slate-100 placeholder-slate-500'
@@ -1750,7 +1944,63 @@ export default function App() {
               </>
             )}
 
-            {(activeTab === 'LOGISTICS' || activeTab === 'PRINT_TEAM') && (
+            {activeTab === 'LOGISTICS' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => exportPoListToExcel(allFilteredPos, 'Logistics_Deliveries')}
+                  className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                    darkMode
+                      ? 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Excel (.xlsx)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportPoListToPdf(allFilteredPos, 'Logistics Deliveries')}
+                  className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                    darkMode
+                      ? 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5 text-red-500" />
+                  <span>PDF</span>
+                </button>
+                {canUserManageLogistics && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingPo(null);
+                      setIsPoModalOpen(true);
+                    }}
+                    className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Truck className="w-4 h-4" />
+                    <span>+ Add Logistics Delivery Entry</span>
+                  </button>
+                )}
+                {canUserManageDn && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingDn(null);
+                      setPrefillDnFromPo(null);
+                      setIsDnModalOpen(true);
+                    }}
+                    className="px-3.5 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Add DN Note (Logistics)</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {activeTab === 'PRINT_TEAM' && (
               <>
                 <button
                   type="button"
@@ -1911,6 +2161,32 @@ export default function App() {
                   >
                     <Plus className="w-4 h-4" />
                     <span>+ Add DN Tracker Entry</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {activeTab === 'POC_DIRECTORY' && (
+              <>
+                {(isAdmin || isBackoffice || canUserEditPo || canUserManageLogistics) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingPoc(null);
+                      setPocForm({
+                        facilityName: '',
+                        pocName: '',
+                        designation: 'Warehouse / Facility POC',
+                        contactNumber: '',
+                        emailId: '',
+                        cityOrHub: '',
+                      });
+                      setIsPocModalOpen(true);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Add Instamart POC Contact</span>
                   </button>
                 )}
               </>
@@ -2203,59 +2479,92 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 1B: LOGISTICS DEPARTMENT */}
+        {/* TAB 1B: LOGISTICS DEPARTMENT — DELIVERY & DN NOTE CONTROL */}
         {activeTab === 'LOGISTICS' && (
-          <div
-            className={`rounded-xl border overflow-hidden ${
-              darkMode
-                ? 'bg-slate-900 border-slate-800'
-                : isGrey
-                ? 'bg-zinc-100 border-zinc-300'
-                : 'bg-white border-slate-200'
-            }`}
-          >
-            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-bold flex items-center gap-2">
-                  <Truck className="w-4 h-4 text-orange-500" />
-                  <span>Logistics Department — Dispatch, Tracking, PUC, ASN & Pickup Control</span>
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Update Logistics Partner, Pickup Tracking ID, PUC, ASN, Clear Bag No, Boxes & Pickup Status.
-                </p>
-              </div>
-            </div>
-
-            {allFilteredPos.filter((p) => p.workflowStage !== 'GRN').length === 0 ? (
-              <div className="p-10 text-center text-xs text-slate-500">
-                No active POs pending dispatch or in transit.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr
-                      className={`border-b font-semibold ${
-                        darkMode
-                          ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
+          <div className="space-y-6">
+            <div
+              className={`rounded-xl border overflow-hidden ${
+                darkMode
+                  ? 'bg-slate-900 border-slate-800'
+                  : isGrey
+                  ? 'bg-zinc-100 border-zinc-300'
+                  : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-bold flex items-center gap-2">
+                    <Truck className="w-4 h-4 text-orange-500" />
+                    <span>
+                      Logistics Department — Add Logistics Delivery, Dispatch Tracking & Log DN Notes
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Add or update Logistics Delivery details (Logistics Partner, Tracking/LR ID, PUC, ASN, Boxes, Pickup Status) and directly create DN Notes for any shipment.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {canUserManageLogistics && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingPo(null);
+                        setIsPoModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                     >
-                      <th className="py-3 px-4 whitespace-nowrap">PO Number & Stage</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Logistics Partner</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Pickup Tracking ID</th>
-                      <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Bag</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Appointment Date</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Pickup Status</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Logistics Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {allFilteredPos
-                      .filter((p) => p.workflowStage !== 'GRN')
-                      .map((po) => (
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Add Logistics Delivery</span>
+                    </button>
+                  )}
+                  {canUserManageDn && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingDn(null);
+                        setPrefillDnFromPo(null);
+                        setIsDnModalOpen(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Create DN Note</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {allFilteredPos.length === 0 ? (
+                <div className="p-10 text-center text-xs text-slate-500">
+                  No Purchase Orders or Logistics deliveries found. Click "+ Add Logistics Delivery" above to log a new delivery.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-3 px-4 whitespace-nowrap">PO Number & Stage</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Product SKU & Item</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Qty</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Logistics Partner</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Tracking / LR ID</th>
+                        <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Bag</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Pickup / Delivery Status</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">
+                          Logistics Delivery & DN Note Actions
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {allFilteredPos.map((po) => (
                         <tr
                           key={po.id}
                           className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
@@ -2270,6 +2579,13 @@ export default function App() {
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap font-medium">
                             {po.warehouseName}
+                          </td>
+                          <td className="py-3 px-4 min-w-[180px]">
+                            <div className="font-mono text-[11px] text-slate-500">{po.itemId}</div>
+                            <div className="font-medium truncate max-w-[200px]">{po.itemName}</div>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold tabular-nums">
+                            {po.totalQty}
                           </td>
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
                             <div>{po.noOfBoxes} Boxes</div>
@@ -2287,13 +2603,10 @@ export default function App() {
                             <div>PUC: {po.puc || '-'} · ASN: {po.asn || '-'}</div>
                             <div className="text-slate-500">Bag: {po.clearBagNo || '-'}</div>
                           </td>
-                          <td className="py-3 px-4 font-mono whitespace-nowrap">
-                            {po.appointmentDate || '-'}
-                          </td>
                           <td className="py-3 px-4 whitespace-nowrap">
                             {po.pickupStatus === 'YES' ? (
                               <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-                                YES (In Transit)
+                                YES ({po.workflowStage === 'GRN' ? 'Delivered / GRN' : 'In Transit'})
                               </span>
                             ) : canUserManageLogistics ? (
                               <button
@@ -2308,29 +2621,127 @@ export default function App() {
                             )}
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            {canUserManageLogistics &&
-                            (po.workflowStage === 'PO_ENTRY' || isAdmin) ? (
+                            <div className="inline-flex items-center gap-1.5">
+                              {canUserManageLogistics && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingPo(po);
+                                    setIsPoModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Add / Edit Delivery</span>
+                                </button>
+                              )}
+                              {canUserManageDn && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingDn(null);
+                                    setPrefillDnFromPo(po);
+                                    setIsDnModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>+ DN Note</span>
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Logistics DN Notes History Sub-Table */}
+            <div
+              className={`rounded-xl border overflow-hidden ${
+                darkMode
+                  ? 'bg-slate-900 border-slate-800'
+                  : isGrey
+                  ? 'bg-zinc-100 border-zinc-300'
+                  : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="px-4 sm:px-6 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs sm:text-sm font-bold">
+                    Logistics DN Notes & LR Discrepancy Records ({filteredDnList.length})
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    All DN Notes logged by Logistics, Warehouse, Backoffice, or Admin.
+                  </p>
+                </div>
+              </div>
+              {filteredDnList.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500">
+                  No DN Notes logged yet. Click "+ DN Note" on any delivery row above to record a DN Note.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-2.5 px-4 whitespace-nowrap">DN Date</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">DN Number</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">Facility Name</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">Parent PO Details</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">Product SKU | Item Name</th>
+                        <th className="py-2.5 px-4 text-right whitespace-nowrap">DN QTY</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">LR No</th>
+                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {filteredDnList.map((dn) => (
+                        <tr key={dn.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                          <td className="py-2.5 px-4 font-mono whitespace-nowrap">{dn.dnDate}</td>
+                          <td className="py-2.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
+                            {dn.dnNumber}
+                          </td>
+                          <td className="py-2.5 px-4 whitespace-nowrap">{dn.facilityName}</td>
+                          <td className="py-2.5 px-4 font-mono whitespace-nowrap">
+                            {dn.parentPoDetails}
+                          </td>
+                          <td className="py-2.5 px-4 font-medium">{dn.dnSkuIdItemName}</td>
+                          <td className="py-2.5 px-4 text-right font-mono font-bold text-red-600 dark:text-red-400">
+                            {dn.dnQty}
+                          </td>
+                          <td className="py-2.5 px-4 font-mono font-semibold">{dn.lrNo}</td>
+                          <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                            {canUserManageDn && (
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setEditingPo(po);
-                                  setIsPoModalOpen(true);
+                                  setEditingDn(dn);
+                                  setPrefillDnFromPo(null);
+                                  setIsDnModalOpen(true);
                                 }}
-                                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 text-xs font-semibold cursor-pointer"
                               >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                <span>Update Logistics</span>
+                                Edit DN Note
                               </button>
-                            ) : (
-                              <span className="text-slate-400 text-xs">Locked</span>
                             )}
                           </td>
                         </tr>
                       ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -2468,7 +2879,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: IN TRANSIT */}
+        {/* TAB 2: IN TRANSIT (FULL ACCESS FOR BACKOFFICE, ADMIN & PERMITTED STAFF) */}
         {activeTab === 'IN_TRANSIT' && (
           <div
             className={`rounded-xl border overflow-hidden ${
@@ -2482,18 +2893,20 @@ export default function App() {
             <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-bold flex items-center gap-2">
-                  <span>02. In Transit Shipments (Pickup Status: YES)</span>
+                  <span>
+                    02. In Transit Shipments (Full Access for Backoffice Team & Admin)
+                  </span>
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  PO fields in this tab are locked for standard employees and can only be edited by Admin. When inwarding succeeds, click "Inward Success → GRN".
+                  Backoffice Team, Admin, and permitted staff can edit all PO fields, update Logistics/Tracking, shift to GRN, or directly log a DN Note. All products here automatically appear in the DN Tracker tab.
                 </p>
               </div>
-              <div className="text-xs font-medium text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
-                <Lock className="w-4 h-4" />
+              <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4" />
                 <span>
-                  {isAdmin
-                    ? 'Admin Override Active: You can edit or delete all In-Transit fields'
-                    : 'Employee Read-Only Lock Active (Admin only for edits)'}
+                  {canUserEditPo || canUserManageLogistics
+                    ? 'Full Backoffice & Admin Access Active (Edit PO, Inward to GRN & Log DN)'
+                    : 'View Mode'}
                 </span>
               </div>
             </div>
@@ -2502,7 +2915,7 @@ export default function App() {
               <div className="p-10 sm:p-12 text-center space-y-2">
                 <div className="text-sm font-semibold">No Shipments Currently In Transit</div>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  When Pickup Status is marked YES in the PO Entry tab, the entire PO record automatically shifts here.
+                  When Pickup Status is marked YES in the PO Entry or Logistics tab, the entire PO record automatically shifts here.
                 </p>
               </div>
             ) : (
@@ -2525,9 +2938,11 @@ export default function App() {
                       <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
                       <th className="py-3 px-4 whitespace-nowrap">Logistics & Tracking</th>
                       <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Bag</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Updated By (Admin/Emp)</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Inward to GRN</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Edit Permission</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Inward / DN Actions</th>
+                      <th className="py-3 px-4 text-right whitespace-nowrap">
+                        Backoffice & Admin Controls
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -2624,25 +3039,39 @@ export default function App() {
                             </div>
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
-                            {canUserManageGrn ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setGrnTargetPo(po);
-                                  setGrnModalMode('INWARD_TO_GRN');
-                                  setIsGrnModalOpen(true);
-                                }}
-                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <PackageCheck className="w-3.5 h-3.5" />
-                                <span>Inward Success → GRN</span>
-                              </button>
-                            ) : (
-                              <span className="text-slate-400 text-xs">No GRN Permission</span>
-                            )}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {canUserManageGrn && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setGrnTargetPo(po);
+                                    setGrnModalMode('INWARD_TO_GRN');
+                                    setIsGrnModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <PackageCheck className="w-3.5 h-3.5" />
+                                  <span>Inward → GRN</span>
+                                </button>
+                              )}
+                              {canUserManageDn && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingDn(null);
+                                    setPrefillDnFromPo(po);
+                                    setIsDnModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>+ DN Note</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
-                            {isAdmin ? (
+                            {canUserEditPo || canUserManageLogistics ? (
                               <div className="inline-flex items-center gap-1.5">
                                 <button
                                   type="button"
@@ -2653,21 +3082,23 @@ export default function App() {
                                   className="px-3 py-1.5 rounded-lg border border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                                 >
                                   <Edit3 className="w-3.5 h-3.5" />
-                                  <span>Admin Edit</span>
+                                  <span>Edit All Fields</span>
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => requestDeletePo(po)}
-                                  className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
-                                  title="Admin Delete PO"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                {(isAdmin || isBackoffice) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => requestDeletePo(po)}
+                                    className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
+                                    title="Delete PO"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-slate-400 text-xs">
                                 <Lock className="w-3.5 h-3.5" />
-                                <span>Locked (Admin Only)</span>
+                                <span>Read-Only</span>
                               </span>
                             )}
                           </td>
@@ -2707,7 +3138,7 @@ export default function App() {
               <div className="p-10 sm:p-12 text-center space-y-2">
                 <div className="text-sm font-semibold">No Inwarded GRN Records Yet</div>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Mark any shipment as "Inward Success → GRN" from the In Transit tab to automatically move it to GRN.
+                  Mark any shipment as "Inward → GRN" from the In Transit tab to automatically move it to GRN.
                 </p>
               </div>
             ) : (
@@ -2826,8 +3257,288 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: INSTAMART DN TRACKER */}
+        {/* TAB 4: INSTAMART DN TRACKER (AUTOMATICALLY SHOWS IN-TRANSIT PRODUCTS + LOGGED DN RECORDS) */}
         {activeTab === 'DN_TRACKER' && (
+          <div className="space-y-6">
+            {/* Automatic In-Transit Products Feed in DN Tab */}
+            <div
+              className={`rounded-xl border overflow-hidden ${
+                darkMode
+                  ? 'bg-slate-900 border-slate-800'
+                  : isGrey
+                  ? 'bg-zinc-100 border-zinc-300'
+                  : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-bold flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                    <Truck className="w-4 h-4 shrink-0" />
+                    <span>
+                      In-Transit Products Automatically Synced to DN ({inTransitList.length})
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Every product currently in the In-Transit tab automatically appears here so Backoffice, Logistics, and Warehouse teams can generate a DN Note in one click with all SKU, PO, and LR details pre-filled.
+                  </p>
+                </div>
+              </div>
+
+              {inTransitList.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500">
+                  No products are currently in In-Transit. Any product moved to In-Transit will automatically show here.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-2.5 px-4 whitespace-nowrap">PO Number & Order Date</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">Facility / Warehouse</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">In-Transit Product (SKU | Item Name)</th>
+                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Shipped Qty</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">Invoice & ASN</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">Logistics & LR / Tracking ID</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">DN Status</th>
+                        <th className="py-2.5 px-4 text-right whitespace-nowrap">
+                          Quick DN Note Action
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {inTransitList.map((po) => {
+                        const matchingDn = dnRecords.find((d) =>
+                          d.parentPoDetails.toLowerCase().includes(po.poNumber.toLowerCase())
+                        );
+                        return (
+                          <tr
+                            key={po.id}
+                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          >
+                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <div className="font-bold text-amber-600 dark:text-amber-400">
+                                {po.poNumber}
+                              </div>
+                              <div className="text-[11px] text-slate-500">{po.orderDate}</div>
+                            </td>
+                            <td className="py-2.5 px-4 font-medium whitespace-nowrap">
+                              {po.warehouseName}
+                            </td>
+                            <td className="py-2.5 px-4 min-w-[220px]">
+                              <div className="font-mono text-[11px] text-orange-600 dark:text-orange-400 font-semibold">
+                                {po.itemId}
+                              </div>
+                              <div className="font-medium">{po.itemName}</div>
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono font-bold tabular-nums">
+                              {po.totalQty}
+                            </td>
+                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <div>Inv: {po.invoiceNo || '-'}</div>
+                              <div className="text-[11px] text-slate-500">ASN: {po.asn || '-'}</div>
+                            </td>
+                            <td className="py-2.5 px-4 whitespace-nowrap">
+                              <div className="font-medium">{po.logisticsPortal || '-'}</div>
+                              <div className="font-mono text-[11px] text-slate-500">
+                                LR: {po.pickupTrackingId || '-'}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-4 whitespace-nowrap">
+                              {matchingDn ? (
+                                <span className="px-2 py-0.5 rounded bg-orange-500/15 text-orange-600 dark:text-orange-400 font-bold text-[11px] font-mono">
+                                  DN Logged: {matchingDn.dnNumber} (Qty: {matchingDn.dnQty})
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold text-[11px]">
+                                  In Transit · Ready for DN
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                              {canUserManageDn ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (matchingDn) {
+                                      setEditingDn(matchingDn);
+                                      setPrefillDnFromPo(null);
+                                    } else {
+                                      setEditingDn(null);
+                                      setPrefillDnFromPo(po);
+                                    }
+                                    setIsDnModalOpen(true);
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>
+                                    {matchingDn ? 'Update DN Note' : '+ Create DN from Product'}
+                                  </span>
+                                </button>
+                              ) : (
+                                <span className="text-slate-400 text-xs">Read-Only</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Official Logged DN Tracker Table */}
+            <div
+              className={`rounded-xl border overflow-hidden ${
+                darkMode
+                  ? 'bg-slate-900 border-slate-800'
+                  : isGrey
+                  ? 'bg-zinc-100 border-zinc-300'
+                  : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-bold">
+                    04. Instamart DN Tracker — Logged Discrepancy Notes ({filteredDnList.length})
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    DN Date · DN Number · Facility Name · Parent PO Details · DN SKU ID | Item Name · DN QTY · WH POC Name / Contact · LR No
+                  </p>
+                </div>
+              </div>
+
+              {filteredDnList.length === 0 ? (
+                <div className="p-10 sm:p-12 text-center space-y-3">
+                  <div className="text-sm font-semibold">No Discrepancy Notes Logged Yet</div>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Click "+ Create DN from Product" on any In-Transit product above or click below to log a DN manually.
+                  </p>
+                  {canUserManageDn && (
+                    <div className="flex items-center justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingDn(null);
+                          setPrefillDnFromPo(null);
+                          setIsDnModalOpen(true);
+                        }}
+                        className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Create First DN Tracker Entry</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-3 px-4 whitespace-nowrap">DN Date</th>
+                        <th className="py-3 px-4 whitespace-nowrap">DN Number</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Facility Name</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Parent PO Details</th>
+                        <th className="py-3 px-4 whitespace-nowrap">DN SKU ID | Item Name</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">DN QTY</th>
+                        <th className="py-3 px-4 whitespace-nowrap">WH POC Name / Contact Details</th>
+                        <th className="py-3 px-4 whitespace-nowrap">LR No</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Updated By (Team Member)</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Edit / Update</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {filteredDnList.map((dn) => (
+                        <tr
+                          key={dn.id}
+                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                        >
+                          <td className="py-3 px-4 font-mono whitespace-nowrap">
+                            {dn.dnDate}
+                          </td>
+                          <td className="py-3 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
+                            {dn.dnNumber}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap font-medium">
+                            {dn.facilityName}
+                          </td>
+                          <td className="py-3 px-4 font-mono whitespace-nowrap">
+                            {dn.parentPoDetails}
+                          </td>
+                          <td className="py-3 px-4 min-w-[220px] font-medium">
+                            {dn.dnSkuIdItemName}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold tabular-nums text-red-600 dark:text-red-400">
+                            {dn.dnQty}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            {dn.whPocDetails}
+                          </td>
+                          <td className="py-3 px-4 font-mono whitespace-nowrap font-semibold">
+                            {dn.lrNo}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="font-semibold">{dn.updatedByName}</div>
+                            <div className="font-mono text-[11px] text-slate-500">
+                              ID: {dn.updatedByEmpId}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5">
+                              {canUserManageDn ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingDn(dn);
+                                    setPrefillDnFromPo(null);
+                                    setIsDnModalOpen(true);
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Update DN</span>
+                                </button>
+                              ) : (
+                                <span className="text-slate-400 text-xs">Read-Only</span>
+                              )}
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => requestDeleteDn(dn)}
+                                  className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
+                                  title="Admin Delete DN"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4B: INSTAMART POC TEAM DIRECTORY (CONTACT NUMBERS & EMAIL IDS) */}
+        {activeTab === 'POC_DIRECTORY' && (
           <div
             className={`rounded-xl border overflow-hidden ${
               darkMode
@@ -2839,36 +3550,67 @@ export default function App() {
           >
             <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-bold">
-                  04. Instamart DN Tracker (Editable by Permitted Employees & Admin)
+                <h2 className="text-sm sm:text-base font-bold flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-orange-500" />
+                  <span>
+                    Instamart POC Team Contact Directory — Facility POC Phone Numbers & Email IDs
+                  </span>
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  DN Date · DN Number · Facility Name · Parent PO Details · DN SKU ID | Item Name · DN QTY · WH POC Name / Contact · LR No
+                  Centralized directory of all Instamart Warehouse / Hub POC Team members, Contact Numbers, and Email IDs. Automatically syncs with the DN Tracker modal.
                 </p>
               </div>
+              {(isAdmin || isBackoffice || canUserEditPo || canUserManageLogistics) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingPoc(null);
+                    setPocForm({
+                      facilityName: '',
+                      pocName: '',
+                      designation: 'Warehouse / Facility POC',
+                      contactNumber: '',
+                      emailId: '',
+                      cityOrHub: '',
+                    });
+                    setIsPocModalOpen(true);
+                  }}
+                  className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>+ Add Instamart POC Contact</span>
+                </button>
+              )}
             </div>
 
-            {filteredDnList.length === 0 ? (
+            {filteredPocList.length === 0 ? (
               <div className="p-10 sm:p-12 text-center space-y-3">
-                <div className="text-sm font-semibold">No Discrepancy Notes Logged</div>
+                <div className="text-sm font-semibold">
+                  No Instamart POC Team Contacts Added Yet
+                </div>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Warehouse and Backoffice teams can log and update Discrepancy Notes manually.
+                  Add Instamart Facility / Warehouse POC names, mobile numbers, and official email IDs so all teams can reach them and auto-fill POC details in DN Notes.
                 </p>
-                {canUserManageDn && (
-                  <div className="flex items-center justify-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingDn(null);
-                        setPrefillDnFromPo(null);
-                        setIsDnModalOpen(true);
-                      }}
-                      className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Create First DN Tracker Entry</span>
-                    </button>
-                  </div>
+                {(isAdmin || isBackoffice || canUserEditPo || canUserManageLogistics) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingPoc(null);
+                      setPocForm({
+                        facilityName: '',
+                        pocName: '',
+                        designation: 'Warehouse / Facility POC',
+                        contactNumber: '',
+                        emailId: '',
+                        cityOrHub: '',
+                      });
+                      setIsPocModalOpen(true);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Add First Instamart POC Contact</span>
+                  </button>
                 )}
               </div>
             ) : (
@@ -2882,83 +3624,93 @@ export default function App() {
                           : 'bg-slate-50 border-slate-200 text-slate-600'
                       }`}
                     >
-                      <th className="py-3 px-4 whitespace-nowrap">DN Date</th>
-                      <th className="py-3 px-4 whitespace-nowrap">DN Number</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Facility Name</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Parent PO Details</th>
-                      <th className="py-3 px-4 whitespace-nowrap">DN SKU ID | Item Name</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">DN QTY</th>
-                      <th className="py-3 px-4 whitespace-nowrap">WH POC Name / Contact Details</th>
-                      <th className="py-3 px-4 whitespace-nowrap">LR No</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Updated By (Team Member)</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Edit / Update</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Facility / Warehouse Name</th>
+                      <th className="py-3 px-4 whitespace-nowrap">City / Hub</th>
+                      <th className="py-3 px-4 whitespace-nowrap">POC Name</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Role / Designation</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Contact Number</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Official Email ID</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
+                      <th className="py-3 px-4 text-right whitespace-nowrap">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {filteredDnList.map((dn) => (
+                    {filteredPocList.map((poc) => (
                       <tr
-                        key={dn.id}
+                        key={poc.id}
                         className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                       >
-                        <td className="py-3 px-4 font-mono whitespace-nowrap">
-                          {dn.dnDate}
-                        </td>
-                        <td className="py-3 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
-                          {dn.dnNumber}
-                        </td>
-                        <td className="py-3 px-4 whitespace-nowrap font-medium">
-                          {dn.facilityName}
-                        </td>
-                        <td className="py-3 px-4 font-mono whitespace-nowrap">
-                          {dn.parentPoDetails}
-                        </td>
-                        <td className="py-3 px-4 min-w-[220px] font-medium">
-                          {dn.dnSkuIdItemName}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-bold tabular-nums text-red-600 dark:text-red-400">
-                          {dn.dnQty}
+                        <td className="py-3 px-4 font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
+                          {poc.facilityName}
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap">
-                          {dn.whPocDetails}
+                          {poc.cityOrHub || '-'}
                         </td>
-                        <td className="py-3 px-4 font-mono whitespace-nowrap font-semibold">
-                          {dn.lrNo}
+                        <td className="py-3 px-4 font-semibold whitespace-nowrap">
+                          {poc.pocName}
                         </td>
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="font-semibold">{dn.updatedByName}</div>
-                          <div className="font-mono text-[11px] text-slate-500">
-                            ID: {dn.updatedByEmpId}
-                          </div>
+                        <td className="py-3 px-4 whitespace-nowrap text-slate-500">
+                          {poc.designation || 'Warehouse POC'}
+                        </td>
+                        <td className="py-3 px-4 font-mono font-semibold whitespace-nowrap">
+                          <a
+                            href={`tel:${poc.contactNumber}`}
+                            className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 hover:underline"
+                          >
+                            <Phone className="w-3.5 h-3.5" />
+                            <span>{poc.contactNumber}</span>
+                          </a>
+                        </td>
+                        <td className="py-3 px-4 font-mono whitespace-nowrap">
+                          {poc.emailId ? (
+                            <a
+                              href={`mailto:${poc.emailId}`}
+                              className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:underline"
+                            >
+                              <Mail className="w-3.5 h-3.5" />
+                              <span>{poc.emailId}</span>
+                            </a>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="py-3 px-4 whitespace-nowrap text-slate-500">
+                          {poc.updatedByName}
                         </td>
                         <td className="py-3 px-4 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1.5">
-                            {canUserManageDn ? (
+                          {(isAdmin || isBackoffice || canUserEditPo || canUserManageLogistics) && (
+                            <div className="inline-flex items-center gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setEditingDn(dn);
-                                  setPrefillDnFromPo(null);
-                                  setIsDnModalOpen(true);
+                                  setEditingPoc(poc);
+                                  setPocForm({
+                                    facilityName: poc.facilityName,
+                                    pocName: poc.pocName,
+                                    designation: poc.designation || 'Warehouse / Facility POC',
+                                    contactNumber: poc.contactNumber,
+                                    emailId: poc.emailId || '',
+                                    cityOrHub: poc.cityOrHub || '',
+                                  });
+                                  setIsPocModalOpen(true);
                                 }}
-                                className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                               >
-                                <Edit3 className="w-3.5 h-3.5" />
-                                <span>Update DN</span>
+                                <Edit3 className="w-3 h-3" />
+                                <span>Edit</span>
                               </button>
-                            ) : (
-                              <span className="text-slate-400 text-xs">Read-Only</span>
-                            )}
-                            {isAdmin && (
-                              <button
-                                type="button"
-                                onClick={() => requestDeleteDn(dn)}
-                                className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
-                                title="Admin Delete DN"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
+                              {(isAdmin || isBackoffice) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePocContact(poc)}
+                                  className="p-1.5 rounded border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
+                                  title="Delete POC Contact"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -2991,7 +3743,7 @@ export default function App() {
                     </span>
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Click any permission badge below to instantly turn ON / OFF data entry access for any Backoffice, Warehouse, Logistics, or Print staff member.
+                    Click any permission badge below to instantly turn ON / OFF data entry access for any Backoffice, Warehouse, Logistics, or Print staff member. Changes apply live to the employee's panel.
                   </p>
                 </div>
 
@@ -3069,12 +3821,12 @@ export default function App() {
                         key: keyof NonNullable<EmployeeProfile['permissions']>;
                         label: string;
                       }[] = [
-                        { key: 'canEditPo', label: 'PO Entry' },
+                        { key: 'canEditPo', label: 'PO & In-Transit' },
                         { key: 'canManageCatalog', label: 'SKU Master (Add/Del)' },
-                        { key: 'canManageLogistics', label: 'Logistics' },
+                        { key: 'canManageLogistics', label: 'Logistics & Delivery' },
                         { key: 'canVerifyPrint', label: 'Print Verify' },
                         { key: 'canManageGrn', label: 'GRN Inward' },
-                        { key: 'canManageDn', label: 'DN Tracker' },
+                        { key: 'canManageDn', label: 'DN Notes' },
                       ];
 
                       return (
@@ -3256,7 +4008,7 @@ export default function App() {
                     05. Admin Employee Activity & Data Entry Audit Trail
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Every time any Backoffice, Warehouse, Logistics, Print, or Admin employee creates or updates a PO, In-Transit status, GRN, or DN record, their Employee Name and Employee ID are displayed here.
+                    Every time any Backoffice, Warehouse, Logistics, Print, or Admin employee creates or updates a PO, In-Transit status, GRN, POC Contact, or DN record, their Employee Name and Employee ID are displayed here.
                   </p>
                 </div>
               </div>
@@ -3326,6 +4078,167 @@ export default function App() {
         )}
       </main>
 
+      {/* POC Contact Add / Edit Modal */}
+      {isPocModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div
+            className={`w-full max-w-lg rounded-2xl border shadow-2xl overflow-hidden ${
+              darkMode
+                ? 'bg-slate-900 border-slate-800 text-slate-100'
+                : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+              <div>
+                <h2 className="text-sm font-bold">
+                  {editingPoc
+                    ? `Edit Instamart POC: ${editingPoc.pocName}`
+                    : 'Add Instamart Facility POC Contact'}
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Save Facility Name, POC Name, Contact Number, and Email ID for the Instamart POC Team directory.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPocModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSavePocContact} className="p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-semibold mb-1">
+                    Facility / Warehouse Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={pocForm.facilityName}
+                    onChange={(e) =>
+                      setPocForm((prev) => ({ ...prev, facilityName: e.target.value }))
+                    }
+                    placeholder="e.g. BLR-IM-HUB-04"
+                    className={`w-full px-3 py-2 rounded-lg border ${
+                      darkMode
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-white border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">City / Region Hub</label>
+                  <input
+                    type="text"
+                    value={pocForm.cityOrHub}
+                    onChange={(e) =>
+                      setPocForm((prev) => ({ ...prev, cityOrHub: e.target.value }))
+                    }
+                    placeholder="e.g. Bangalore / Kolkata / Mumbai"
+                    className={`w-full px-3 py-2 rounded-lg border ${
+                      darkMode
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-white border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-semibold mb-1">POC Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={pocForm.pocName}
+                    onChange={(e) =>
+                      setPocForm((prev) => ({ ...prev, pocName: e.target.value }))
+                    }
+                    placeholder="e.g. Rahul Sharma"
+                    className={`w-full px-3 py-2 rounded-lg border ${
+                      darkMode
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-white border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Role / Designation</label>
+                  <input
+                    type="text"
+                    value={pocForm.designation}
+                    onChange={(e) =>
+                      setPocForm((prev) => ({ ...prev, designation: e.target.value }))
+                    }
+                    placeholder="e.g. Inward / GRN Lead"
+                    className={`w-full px-3 py-2 rounded-lg border ${
+                      darkMode
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-white border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-semibold mb-1">Contact Number *</label>
+                  <input
+                    type="text"
+                    required
+                    value={pocForm.contactNumber}
+                    onChange={(e) =>
+                      setPocForm((prev) => ({ ...prev, contactNumber: e.target.value }))
+                    }
+                    placeholder="e.g. +91 9876543210"
+                    className={`w-full px-3 py-2 rounded-lg border font-mono ${
+                      darkMode
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-white border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">Official Email ID *</label>
+                  <input
+                    type="email"
+                    required
+                    value={pocForm.emailId}
+                    onChange={(e) =>
+                      setPocForm((prev) => ({ ...prev, emailId: e.target.value }))
+                    }
+                    placeholder="e.g. poc.blr04@swiggy.in"
+                    className={`w-full px-3 py-2 rounded-lg border font-mono ${
+                      darkMode
+                        ? 'bg-slate-800 border-slate-700 text-white'
+                        : 'bg-white border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsPocModalOpen(false)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-semibold cursor-pointer"
+                >
+                  {editingPoc ? 'Update POC Contact' : 'Save POC Contact'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modals */}
       <PoFormModal
         isOpen={isPoModalOpen}
@@ -3344,6 +4257,8 @@ export default function App() {
         onSave={handleSaveDn}
         initialDn={editingDn}
         prefillFromPo={prefillDnFromPo}
+        purchaseOrders={purchaseOrders}
+        pocContacts={pocContacts}
         darkMode={darkMode}
       />
 

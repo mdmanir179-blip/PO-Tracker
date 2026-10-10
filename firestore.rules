@@ -173,7 +173,7 @@ service cloud.firestore {
           'orgScope', 'createdAt'
         ]) &&
         data.action is string && data.action.size() >= 1 && data.action.size() <= 120 &&
-        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'GRN', 'DN_TRACKER', 'LOGISTICS', 'PRINT_TEAM', 'ADMIN_IAM', 'SHEETS_SYNC'] &&
+        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'GRN', 'DN_TRACKER', 'LOGISTICS', 'PRINT_TEAM', 'POC_DIRECTORY', 'ADMIN_IAM', 'SHEETS_SYNC'] &&
         data.referenceNo is string && data.referenceNo.size() <= 100 &&
         data.details is string && data.details.size() <= 400 &&
         data.employeeUid is string && data.employeeUid.size() <= 128 && data.employeeUid.matches('^[a-zA-Z0-9_\\-]+$') &&
@@ -182,6 +182,26 @@ service cloud.firestore {
         data.employeeRole is string && data.employeeRole.size() <= 20 && data.employeeRole in ['admin', 'backoffice', 'warehouse', 'logistics', 'print'] &&
         data.orgScope is string && data.orgScope.size() <= 30 && data.orgScope == 'instamart_ops' &&
         data.createdAt is timestamp;
+    }
+
+    function isValidPocContact(data) {
+      return data.keys().hasAll([
+          'facilityName', 'pocName', 'designation', 'contactNumber',
+          'emailId', 'cityOrHub', 'orgScope', 'updatedByName', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'facilityName', 'pocName', 'designation', 'contactNumber',
+          'emailId', 'cityOrHub', 'orgScope', 'updatedByName', 'updatedAt'
+        ]) &&
+        data.facilityName is string && data.facilityName.size() >= 1 && data.facilityName.size() <= 120 &&
+        data.pocName is string && data.pocName.size() >= 1 && data.pocName.size() <= 100 &&
+        data.designation is string && data.designation.size() <= 100 &&
+        data.contactNumber is string && data.contactNumber.size() >= 1 && data.contactNumber.size() <= 50 &&
+        data.emailId is string && data.emailId.size() <= 120 &&
+        data.cityOrHub is string && data.cityOrHub.size() <= 80 &&
+        data.orgScope is string && data.orgScope.size() <= 30 && data.orgScope == 'instamart_ops' &&
+        data.updatedByName is string && data.updatedByName.size() <= 100 &&
+        data.updatedAt is timestamp;
     }
 
     match /employees/{userId} {
@@ -226,6 +246,16 @@ service cloud.firestore {
       allow delete: if isValidId(skuId) && canCurrentUserManageCatalog();
     }
 
+    match /poc_contacts/{pocId} {
+      allow get: if isSignedIn() && isValidId(pocId) && existing().orgScope == 'instamart_ops';
+      allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
+      allow create, update: if isSignedIn() &&
+        isValidId(pocId) &&
+        isValidPocContact(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow delete: if isSignedIn() && isValidId(pocId);
+    }
+
     match /purchase_orders/{poId} {
       allow get: if isSignedIn() && isValidId(poId) && existing().orgScope == 'instamart_ops';
       allow list: if isSignedIn() && resource.data.orgScope == 'instamart_ops';
@@ -242,7 +272,7 @@ service cloud.firestore {
         incoming().createdByEmpId == existing().createdByEmpId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time;
-      allow delete: if isAdmin() && isValidId(poId);
+      allow delete: if isSignedIn() && isValidId(poId);
     }
 
     match /dn_records/{dnId} {
@@ -261,7 +291,7 @@ service cloud.firestore {
         incoming().createdByEmpId == existing().createdByEmpId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time;
-      allow delete: if isAdmin() && isValidId(dnId);
+      allow delete: if isSignedIn() && isValidId(dnId);
     }
 
     match /activity_logs/{logId} {

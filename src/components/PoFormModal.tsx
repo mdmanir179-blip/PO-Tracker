@@ -170,8 +170,7 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isLockedInTransit =
-    initialPo?.workflowStage === 'IN_TRANSIT' && userRole !== 'admin';
+  const isLockedInTransit = false;
 
   const recomputeSummary = (lines: PoLineItem[]) => {
     const valid = lines.filter((l) => l.itemId.trim() || l.itemName.trim());
@@ -383,7 +382,7 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
             <div className="p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2.5">
               <Truck className="w-4 h-4 shrink-0" />
               <span>
-                <strong>Pickup Status is set to YES:</strong> Saving will immediately shift this entire PO record to the <strong>In Transit</strong> tab. Standard employees will no longer be able to edit its fields (Admin only).
+                <strong>Pickup Status is set to YES:</strong> Saving will immediately shift this PO record to the <strong>In Transit</strong> tab and automatically sync its product items into the <strong>DN Tracker</strong>. Backoffice, Logistics, and Admin retain full control to manage it.
               </span>
             </div>
           )}
