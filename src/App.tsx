@@ -337,20 +337,24 @@ export default function App() {
           };
           setEmployeeProfile(mergedProfile);
 
-          // If Admin updated a pre-created record (emp_...), automatically sync those permissions onto the user's real UID doc and clean up duplicate
+          // If Admin updated a pre-created record (emp_...), automatically sync those permissions onto the user's real UID doc
           if (byEmailOrEmpId && byEmailOrEmpId.uid.startsWith('emp_')) {
             setDoc(
               doc(db, 'employees', firebaseUser.uid),
               {
-                ...mergedProfile,
+                uid: firebaseUser.uid,
+                employeeName: mergedProfile.employeeName.slice(0, 100),
+                employeeId: mergedProfile.employeeId.slice(0, 50),
+                email: (mergedProfile.email || firebaseUser.email || '').slice(0, 120),
+                role: mergedProfile.role,
+                accessStatus: mergedProfile.accessStatus || 'APPROVED',
+                permissions: mergedProfile.permissions,
+                spreadsheetId: mergedProfile.spreadsheetId || '',
+                orgScope: 'instamart_ops',
                 updatedAt: serverTimestamp(),
               },
               { merge: true }
-            )
-              .then(() => {
-                deleteDoc(doc(db, 'employees', byEmailOrEmpId.uid)).catch(() => {});
-              })
-              .catch(() => {});
+            ).catch(() => {});
           }
         }
       },
@@ -426,7 +430,7 @@ export default function App() {
     }
   };
 
-  // Sign Up with Email, Password, Employee Name, Employee ID, and Role
+  // Sign Up with Email, Password, Employee Name, Employee ID, and Role (preserves any Admin pre-assigned permissions)
   const handleEmailSignUp = async (data: {
     employeeName: string;
     employeeId: string;
@@ -440,14 +444,26 @@ export default function App() {
       const user = await emailSignUp(data.email, data.password, data.employeeName);
       setFirebaseUser(user);
       const docRef = doc(db, 'employees', user.uid);
-      const perms = getDefaultPermissionsForRole(data.role);
+      const preAssigned = employeesList.find(
+        (e) =>
+          (e.email && e.email.trim().toLowerCase() === data.email.trim().toLowerCase()) ||
+          (e.employeeId &&
+            e.employeeId.trim().toLowerCase() === data.employeeId.trim().toLowerCase())
+      );
+      const effectiveRole = preAssigned?.role || data.role;
+      const perms = {
+        ...getDefaultPermissionsForRole(effectiveRole),
+        ...(preAssigned?.permissions || {}),
+      };
+      const status = preAssigned?.accessStatus || 'APPROVED';
+
       await setDoc(docRef, {
         uid: user.uid,
         employeeName: data.employeeName.slice(0, 100),
         employeeId: data.employeeId.slice(0, 50),
         email: data.email.slice(0, 120),
-        role: data.role,
-        accessStatus: 'APPROVED',
+        role: effectiveRole,
+        accessStatus: status,
         permissions: perms,
         spreadsheetId: '',
         orgScope: 'instamart_ops',
@@ -459,8 +475,8 @@ export default function App() {
         employeeName: data.employeeName.slice(0, 100),
         employeeId: data.employeeId.slice(0, 50),
         email: data.email.slice(0, 120),
-        role: data.role,
-        accessStatus: 'APPROVED',
+        role: effectiveRole,
+        accessStatus: status,
         permissions: perms,
         spreadsheetId: '',
         orgScope: 'instamart_ops',
@@ -503,16 +519,34 @@ export default function App() {
     setIsSubmittingAuth(true);
     setAuthError(null);
     const docRef = doc(db, 'employees', firebaseUser.uid);
-    const perms = getDefaultPermissionsForRole(data.role);
+    const preAssigned = employeesList.find(
+      (e) =>
+        (firebaseUser.email &&
+          e.email &&
+          e.email.trim().toLowerCase() === firebaseUser.email.trim().toLowerCase()) ||
+        (e.employeeId &&
+          e.employeeId.trim().toLowerCase() === data.employeeId.trim().toLowerCase())
+    );
+    const effectiveRole = preAssigned?.role || data.role;
+    const perms = {
+      ...getDefaultPermissionsForRole(effectiveRole),
+      ...(preAssigned?.permissions || {}),
+    };
+    const status = preAssigned?.accessStatus || 'APPROVED';
+
     try {
       const existingSnap = await getDoc(docRef);
       if (existingSnap.exists()) {
+        const existingData = existingSnap.data() as EmployeeProfile;
         await updateDoc(docRef, {
           employeeName: data.employeeName.slice(0, 100),
           employeeId: data.employeeId.slice(0, 50),
-          role: data.role,
-          accessStatus: 'APPROVED',
-          permissions: perms,
+          role: existingData.role || effectiveRole,
+          accessStatus: existingData.accessStatus || status,
+          permissions: {
+            ...perms,
+            ...(existingData.permissions || {}),
+          },
           spreadsheetId: '',
           orgScope: 'instamart_ops',
           updatedAt: serverTimestamp(),
@@ -523,8 +557,8 @@ export default function App() {
           employeeName: data.employeeName.slice(0, 100),
           employeeId: data.employeeId.slice(0, 50),
           email: (firebaseUser.email || '').slice(0, 120),
-          role: data.role,
-          accessStatus: 'APPROVED',
+          role: effectiveRole,
+          accessStatus: status,
           permissions: perms,
           spreadsheetId: '',
           orgScope: 'instamart_ops',
@@ -537,8 +571,8 @@ export default function App() {
         employeeName: data.employeeName.slice(0, 100),
         employeeId: data.employeeId.slice(0, 50),
         email: (firebaseUser.email || '').slice(0, 120),
-        role: data.role,
-        accessStatus: 'APPROVED',
+        role: effectiveRole,
+        accessStatus: status,
         permissions: perms,
         spreadsheetId: '',
         orgScope: 'instamart_ops',
@@ -660,11 +694,82 @@ export default function App() {
     }
   };
 
-  // Admin: Create or Edit Employee & Permissions (also updates any matching email/employeeId record)
+  // Helper: Automatically create or update a corresponding DN record whenever a PO is in IN_TRANSIT
+  const autoSyncPoProductsToDn = async (poData: {
+    id: string;
+    poNumber: string;
+    orderDate: string;
+    warehouseName: string;
+    itemId: string;
+    itemName: string;
+    totalQty: number;
+    invoiceNo: string;
+    pickupTrackingId: string;
+    asn: string;
+  }) => {
+    if (!firebaseUser || !employeeProfile) return;
+    const autoDnId = `dn_auto_${poData.id.replace(/[^a-zA-Z0-9_-]/g, '')}`.slice(0, 100);
+    const existingAutoDn = dnRecords.find(
+      (d) =>
+        d.id === autoDnId ||
+        d.parentPoDetails.toLowerCase().includes(poData.poNumber.trim().toLowerCase())
+    );
+    const matchedPoc = pocContacts.find(
+      (c) =>
+        c.facilityName.trim().toLowerCase() ===
+        poData.warehouseName.trim().toLowerCase()
+    );
+    const pocStr = matchedPoc
+      ? `${matchedPoc.pocName} · ${matchedPoc.contactNumber} · ${matchedPoc.emailId}`.slice(0, 200)
+      : existingAutoDn?.whPocDetails || 'Instamart Facility POC';
+
+    try {
+      if (existingAutoDn) {
+        await updateDoc(doc(db, 'dn_records', existingAutoDn.id), {
+          facilityName: poData.warehouseName.trim().slice(0, 120),
+          parentPoDetails: `${poData.poNumber.trim()} | Inv: ${poData.invoiceNo.trim() || 'N/A'} | In-Transit`.slice(0, 200),
+          dnSkuIdItemName: `${poData.itemId.trim()} | ${poData.itemName.trim()}`.slice(0, 250),
+          lrNo: (poData.pickupTrackingId.trim() || poData.asn.trim() || existingAutoDn.lrNo || 'IN-TRANSIT').slice(0, 80),
+          whPocDetails: pocStr,
+          updatedByUid: firebaseUser.uid,
+          updatedByName: employeeProfile.employeeName.slice(0, 100),
+          updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(doc(db, 'dn_records', autoDnId), {
+          dnDate: poData.orderDate.trim().slice(0, 30) || new Date().toISOString().slice(0, 10),
+          dnNumber: `DN-${poData.poNumber.trim().replace(/[^a-zA-Z0-9_-]/g, '')}`.slice(0, 80),
+          facilityName: poData.warehouseName.trim().slice(0, 120),
+          parentPoDetails: `${poData.poNumber.trim()} | Inv: ${poData.invoiceNo.trim() || 'N/A'} | In-Transit`.slice(0, 200),
+          dnSkuIdItemName: `${poData.itemId.trim()} | ${poData.itemName.trim()}`.slice(0, 250),
+          dnQty: Number(poData.totalQty) || 0,
+          whPocDetails: pocStr,
+          lrNo: (poData.pickupTrackingId.trim() || poData.asn.trim() || 'IN-TRANSIT').slice(0, 80),
+          reportFileName: '',
+          reportFileType: '',
+          reportFileSize: 0,
+          reportFileDataUrl: '',
+          orgScope: 'instamart_ops',
+          createdByUid: firebaseUser.uid,
+          createdByName: employeeProfile.employeeName.slice(0, 100),
+          createdByEmpId: employeeProfile.employeeId.slice(0, 50),
+          updatedByUid: firebaseUser.uid,
+          updatedByName: employeeProfile.employeeName.slice(0, 100),
+          updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (err) {
+      console.error('Auto-sync In-Transit product to DN error:', err);
+    }
+  };
+
+  // Admin: Create or Edit Employee & Permissions (updates all matching UID/email/employeeId records)
   const handleSaveEmployee = async (values: EmployeeFormValues) => {
     if (!firebaseUser || !employeeProfile || employeeProfile.role !== 'admin') return;
-    // Check if an existing employee already matches by email or employeeId so we update the real user UID document directly
-    const existingMatched = employeesList.find(
+    const allMatched = employeesList.filter(
       (e) =>
         (values.uid && e.uid === values.uid) ||
         (values.email.trim() &&
@@ -675,8 +780,11 @@ export default function App() {
           e.employeeId.trim().toLowerCase() === values.employeeId.trim().toLowerCase())
     );
 
+    // Prefer updating the real authenticated user UID (one that doesn't start with emp_) if present
+    const realAuthDoc = allMatched.find((e) => !e.uid.startsWith('emp_')) || allMatched[0];
+
     const targetUid =
-      existingMatched?.uid ||
+      realAuthDoc?.uid ||
       values.uid ||
       `emp_${values.employeeId.replace(/[^a-zA-Z0-9_-]/g, '')}_${Date.now()}`;
     const empRef = doc(db, 'employees', targetUid);
@@ -708,6 +816,18 @@ export default function App() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+      }
+
+      // Also sync any duplicate pre-created records for the same employeeId/email
+      for (const dup of allMatched) {
+        if (dup.uid !== targetUid) {
+          await updateDoc(doc(db, 'employees', dup.uid), {
+            role: values.role,
+            accessStatus: values.accessStatus,
+            permissions: values.permissions,
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        }
       }
 
       await recordActivity(
@@ -827,12 +947,27 @@ export default function App() {
         const shiftedToTransit =
           editingPo.workflowStage === 'PO_ENTRY' && newStage === 'IN_TRANSIT';
 
+        if (newStage === 'IN_TRANSIT') {
+          await autoSyncPoProductsToDn({
+            id: editingPo.id,
+            poNumber: values.poNumber,
+            orderDate: values.orderDate,
+            warehouseName: values.warehouseName,
+            itemId: values.itemId,
+            itemName: values.itemName,
+            totalQty: Number(values.totalQty) || 0,
+            invoiceNo: values.invoiceNo,
+            pickupTrackingId: values.pickupTrackingId,
+            asn: values.asn,
+          });
+        }
+
         await recordActivity(
-          shiftedToTransit ? 'Pickup YES → Shifted to In Transit' : 'Updated PO Details',
+          shiftedToTransit ? 'Pickup YES → Shifted to In Transit & Synced to DN' : 'Updated PO Details',
           shiftedToTransit ? 'IN_TRANSIT' : 'PO_ENTRY',
           values.poNumber,
           `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated PO ${values.poNumber}${
-            shiftedToTransit ? ' and shifted it to In Transit (Locked for non-admin).' : '.'
+            shiftedToTransit ? ' and shifted it to In Transit (Auto-synced to DN).' : '.'
           }`
         );
 
@@ -891,9 +1026,23 @@ export default function App() {
 
       try {
         await setDoc(doc(db, 'purchase_orders', poId), newPoDoc);
+        if (values.pickupStatus === 'YES') {
+          await autoSyncPoProductsToDn({
+            id: poId,
+            poNumber: values.poNumber,
+            orderDate: values.orderDate,
+            warehouseName: values.warehouseName,
+            itemId: values.itemId,
+            itemName: values.itemName,
+            totalQty: Number(values.totalQty) || 0,
+            invoiceNo: values.invoiceNo,
+            pickupTrackingId: values.pickupTrackingId,
+            asn: values.asn,
+          });
+        }
         await recordActivity(
           values.pickupStatus === 'YES'
-            ? 'Created PO & Shifted to In Transit'
+            ? 'Created PO & Shifted to In Transit (Auto-Synced to DN)'
             : 'Created New PO Entry',
           values.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PO_ENTRY',
           values.poNumber,
@@ -949,11 +1098,21 @@ export default function App() {
       ...currentPerms,
       [permKey]: nextVal,
     };
+    const matchingDocs = employeesList.filter(
+      (e) =>
+        e.uid === emp.uid ||
+        (emp.email && e.email && e.email.trim().toLowerCase() === emp.email.trim().toLowerCase()) ||
+        (emp.employeeId &&
+          e.employeeId &&
+          e.employeeId.trim().toLowerCase() === emp.employeeId.trim().toLowerCase())
+    );
     try {
-      await updateDoc(doc(db, 'employees', emp.uid), {
-        permissions: updatedPerms,
-        updatedAt: serverTimestamp(),
-      });
+      for (const target of matchingDocs) {
+        await updateDoc(doc(db, 'employees', target.uid), {
+          permissions: updatedPerms,
+          updatedAt: serverTimestamp(),
+        });
+      }
       await recordActivity(
         `Admin Toggled ${permKey}: ${nextVal ? 'ON' : 'OFF'}`,
         'ADMIN_IAM',
@@ -976,12 +1135,22 @@ export default function App() {
       canManageGrn: grantAll,
       canManageDn: grantAll,
     };
+    const matchingDocs = employeesList.filter(
+      (e) =>
+        e.uid === emp.uid ||
+        (emp.email && e.email && e.email.trim().toLowerCase() === emp.email.trim().toLowerCase()) ||
+        (emp.employeeId &&
+          e.employeeId &&
+          e.employeeId.trim().toLowerCase() === emp.employeeId.trim().toLowerCase())
+    );
     try {
-      await updateDoc(doc(db, 'employees', emp.uid), {
-        accessStatus: grantAll ? 'APPROVED' : emp.accessStatus || 'APPROVED',
-        permissions: updatedPerms,
-        updatedAt: serverTimestamp(),
-      });
+      for (const target of matchingDocs) {
+        await updateDoc(doc(db, 'employees', target.uid), {
+          accessStatus: grantAll ? 'APPROVED' : emp.accessStatus || 'APPROVED',
+          permissions: updatedPerms,
+          updatedAt: serverTimestamp(),
+        });
+      }
       await recordActivity(
         grantAll ? 'Admin Granted Full Module Access' : 'Admin Revoked All Module Access',
         'ADMIN_IAM',
@@ -997,12 +1166,22 @@ export default function App() {
   const handleQuickChangeEmployeeRole = async (emp: EmployeeProfile, newRole: TeamRole) => {
     if (!isAdmin) return;
     const defaultPerms = getDefaultPermissionsForRole(newRole);
+    const matchingDocs = employeesList.filter(
+      (e) =>
+        e.uid === emp.uid ||
+        (emp.email && e.email && e.email.trim().toLowerCase() === emp.email.trim().toLowerCase()) ||
+        (emp.employeeId &&
+          e.employeeId &&
+          e.employeeId.trim().toLowerCase() === emp.employeeId.trim().toLowerCase())
+    );
     try {
-      await updateDoc(doc(db, 'employees', emp.uid), {
-        role: newRole,
-        permissions: defaultPerms,
-        updatedAt: serverTimestamp(),
-      });
+      for (const target of matchingDocs) {
+        await updateDoc(doc(db, 'employees', target.uid), {
+          role: newRole,
+          permissions: defaultPerms,
+          updatedAt: serverTimestamp(),
+        });
+      }
       await recordActivity(
         'Admin Changed Employee Department Role',
         'ADMIN_IAM',
@@ -1018,11 +1197,21 @@ export default function App() {
   const handleQuickToggleEmployeeStatus = async (emp: EmployeeProfile) => {
     if (!isAdmin) return;
     const nextStatus = emp.accessStatus === 'RESTRICTED' ? 'APPROVED' : 'RESTRICTED';
+    const matchingDocs = employeesList.filter(
+      (e) =>
+        e.uid === emp.uid ||
+        (emp.email && e.email && e.email.trim().toLowerCase() === emp.email.trim().toLowerCase()) ||
+        (emp.employeeId &&
+          e.employeeId &&
+          e.employeeId.trim().toLowerCase() === emp.employeeId.trim().toLowerCase())
+    );
     try {
-      await updateDoc(doc(db, 'employees', emp.uid), {
-        accessStatus: nextStatus,
-        updatedAt: serverTimestamp(),
-      });
+      for (const target of matchingDocs) {
+        await updateDoc(doc(db, 'employees', target.uid), {
+          accessStatus: nextStatus,
+          updatedAt: serverTimestamp(),
+        });
+      }
       await recordActivity(
         `Admin Changed Access Status: ${nextStatus}`,
         'ADMIN_IAM',
@@ -1134,7 +1323,7 @@ export default function App() {
     });
   };
 
-  // Quick toggle Pickup Status YES on PO Entry table row -> Shifts to In Transit
+  // Quick toggle Pickup Status YES on PO Entry table row -> Shifts to In Transit & Auto-Syncs to DN
   const handleQuickShiftToInTransit = async (po: PurchaseOrder) => {
     if (!firebaseUser || !employeeProfile) return;
     const poRef = doc(db, 'purchase_orders', po.id);
@@ -1148,11 +1337,23 @@ export default function App() {
         updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
         updatedAt: serverTimestamp(),
       });
+      await autoSyncPoProductsToDn({
+        id: po.id,
+        poNumber: po.poNumber,
+        orderDate: po.orderDate,
+        warehouseName: po.warehouseName,
+        itemId: po.itemId,
+        itemName: po.itemName,
+        totalQty: Number(po.totalQty) || 0,
+        invoiceNo: po.invoiceNo,
+        pickupTrackingId: po.pickupTrackingId,
+        asn: po.asn,
+      });
       await recordActivity(
-        'Pickup Status YES → Shifted to In Transit',
+        'Pickup Status YES → Shifted to In Transit & Synced to DN',
         'IN_TRANSIT',
         po.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked Pickup Status YES for PO ${po.poNumber}. Record shifted to In Transit and locked for non-admins.`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked Pickup Status YES for PO ${po.poNumber}. Record shifted to In Transit and automatically synced to DN Tracker.`
       );
       setActiveTab('IN_TRANSIT');
     } catch (err) {
