@@ -170,3 +170,25 @@ export type ActiveTab =
   | 'DN_TRACKER'
   | 'POC_DIRECTORY'
   | 'ADMIN_AUDIT';
+
+export type NotificationType =
+  | 'EXPIRED'
+  | 'EXPIRING_TODAY'
+  | 'EXPIRING_SOON'
+  | 'APPOINTMENT_TODAY'
+  | 'APPOINTMENT_TOMORROW';
+
+export interface AppNotification {
+  id: string;
+  type: NotificationType;
+  severity: 'critical' | 'urgent' | 'warning' | 'info';
+  title: string;
+  message: string;
+  poId: string;
+  poNumber: string;
+  targetStage: WorkflowStage;
+  warehouseName: string;
+  dateStr: string;
+  daysDiff: number;
+  appointmentId?: string;
+}

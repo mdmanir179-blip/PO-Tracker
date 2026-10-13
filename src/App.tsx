@@ -39,6 +39,12 @@ import {
   Mail,
   Building2,
   RotateCcw,
+  Bell,
+  BellRing,
+  Calendar,
+  ChevronRight,
+  WifiOff,
+  Smartphone,
 } from 'lucide-react';
 import {
   db,
@@ -60,6 +66,8 @@ import {
   DnRecord,
   ActivityLog,
   ActiveTab,
+  WorkflowStage,
+  AppNotification,
 } from './types';
 import { AuthScreen } from './components/AuthScreen';
 import { PoFormModal, PoFormValues } from './components/PoFormModal';
@@ -73,6 +81,10 @@ import {
   getDefaultPermissionsForRole,
 } from './components/EmployeeModal';
 import { ProductCatalogModal } from './components/ProductCatalogModal';
+import { NotificationCenter } from './components/NotificationCenter';
+import { BrandLogo } from './components/BrandLogo';
+import { PWAInstallButton, FloatingInstallBanner } from './components/PWAInstallButton';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 import {
   exportMasterWorkbookToExcel,
   exportPoListToExcel,
@@ -86,34 +98,21 @@ import {
   exportAuditLogsToExcel,
   exportAuditLogsToPdf,
 } from './services/exportService';
+import {
+  playNotificationChime,
+  requestBrowserNotificationPermission,
+  triggerBrowserNotification,
+  computeNotifications,
+  getAppointmentStatus,
+  getPoExpiryStatus,
+} from './services/notificationService';
 
 function generateSafeId(prefix: string): string {
   const rand = Math.random().toString(36).substring(2, 10);
   return `${prefix}_${Date.now()}_${rand}`;
 }
 
-export function getPoExpiryStatus(poExpiryDate?: string): {
-  isExpiringSoon: boolean;
-  isExpired: boolean;
-  daysLeft: number | null;
-} {
-  if (!poExpiryDate || !poExpiryDate.trim()) {
-    return { isExpiringSoon: false, isExpired: false, daysLeft: null };
-  }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const exp = new Date(poExpiryDate);
-  if (isNaN(exp.getTime())) {
-    return { isExpiringSoon: false, isExpired: false, daysLeft: null };
-  }
-  exp.setHours(0, 0, 0, 0);
-  const diffDays = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  return {
-    isExpiringSoon: diffDays >= 0 && diffDays <= 7,
-    isExpired: diffDays < 0,
-    daysLeft: diffDays,
-  };
-}
+export { getPoExpiryStatus, getAppointmentStatus };
 
 export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
@@ -126,6 +125,7 @@ export default function App() {
 
   const darkMode = themeMode === 'dark';
   const isGrey = themeMode === 'grey';
+  const isOnline = useOnlineStatus();
 
   const setDarkMode = (val: boolean | ((prev: boolean) => boolean)) => {
     const nextDark = typeof val === 'function' ? val(darkMode) : val;
@@ -228,6 +228,110 @@ export default function App() {
     confirmLabel: 'Confirm',
     onConfirm: async () => {},
   });
+
+  // Ops Notifications & Alert Center State
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('instamart_sound_alerts') !== 'false';
+  });
+  const [dismissedNotifications, setDismissedNotifications] = useState<string[]>([]);
+  const [hasBrowserNotificationPermission, setHasBrowserNotificationPermission] =
+    useState<boolean>(() => {
+      return (
+        typeof window !== 'undefined' &&
+        'Notification' in window &&
+        Notification.permission === 'granted'
+      );
+    });
+
+  // Derived Notifications from current Purchase Orders
+  const activeNotifications = useMemo(
+    () => computeNotifications(purchaseOrders),
+    [purchaseOrders]
+  );
+
+  const visibleNotifications = useMemo(
+    () => activeNotifications.filter((n) => !dismissedNotifications.includes(n.id)),
+    [activeNotifications, dismissedNotifications]
+  );
+
+  const todayAppointmentNotifications = useMemo(
+    () => visibleNotifications.filter((n) => n.type === 'APPOINTMENT_TODAY'),
+    [visibleNotifications]
+  );
+
+  const expiredNotifications = useMemo(
+    () =>
+      visibleNotifications.filter(
+        (n) => n.type === 'EXPIRED' || n.type === 'EXPIRING_TODAY'
+      ),
+    [visibleNotifications]
+  );
+
+  // Play gentle sound alert & optional desktop notification when new appointment or expired PO arrives
+  const prevAlertCountRef = useRef<number>(0);
+  useEffect(() => {
+    const urgentCount = todayAppointmentNotifications.length + expiredNotifications.length;
+    if (urgentCount > 0 && urgentCount > prevAlertCountRef.current) {
+      if (soundEnabled) {
+        playNotificationChime();
+      }
+      if (hasBrowserNotificationPermission) {
+        if (todayAppointmentNotifications.length > 0) {
+          triggerBrowserNotification(
+            `📅 Instamart Alert: ${todayAppointmentNotifications.length} Appointment(s) Today!`,
+            `PO #${todayAppointmentNotifications[0].poNumber} has appointment scheduled for TODAY at ${todayAppointmentNotifications[0].warehouseName}.`,
+            'apt-today'
+          );
+        } else if (expiredNotifications.length > 0) {
+          triggerBrowserNotification(
+            `🚨 Instamart Alert: ${expiredNotifications.length} PO(s) Expired!`,
+            `PO #${expiredNotifications[0].poNumber} has expired. Please review warehouse dispatch status.`,
+            'po-expired'
+          );
+        }
+      }
+    }
+    prevAlertCountRef.current = urgentCount;
+  }, [
+    todayAppointmentNotifications,
+    expiredNotifications,
+    soundEnabled,
+    hasBrowserNotificationPermission,
+  ]);
+
+  const toggleSound = () => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('instamart_sound_alerts', String(next));
+      if (next) playNotificationChime();
+      return next;
+    });
+  };
+
+  const handleRequestBrowserNotification = async () => {
+    const granted = await requestBrowserNotificationPermission();
+    setHasBrowserNotificationPermission(granted);
+    if (granted) {
+      triggerBrowserNotification(
+        '🔔 Instamart Operations Alerts Enabled',
+        'You will receive instant alerts when POs expire or on warehouse appointment days.'
+      );
+    }
+  };
+
+  const handleSelectPoFromNotification = (poNumber: string, stage: WorkflowStage) => {
+    setActiveTab(stage === 'GRN' ? 'GRN' : stage === 'IN_TRANSIT' ? 'IN_TRANSIT' : 'PO_ENTRY');
+    setSearchQuery(poNumber);
+  };
+
+  const handleDismissNotification = (id: string) => {
+    setDismissedNotifications((prev) => [...prev, id]);
+  };
+
+  const handleDismissAllNotifications = () => {
+    setDismissedNotifications(activeNotifications.map((n) => n.id));
+  };
 
   // Listen to Firebase Auth state
   useEffect(() => {
@@ -1969,14 +2073,13 @@ export default function App() {
             : 'bg-white border-slate-200'
         }`}
       >
-        {/* Zone 1: Brand Title */}
+        {/* Zone 1: Brand Logo & Title */}
         <div className="flex items-center gap-3">
-          <a
-            href="#top"
-            className="text-sm sm:text-base lg:text-lg font-bold tracking-tight whitespace-nowrap"
-          >
-            Instamart PO & DN Tracker
-          </a>
+          <BrandLogo
+            size="md"
+            showSubtitle={true}
+            subtitleText="PO · In-Transit · RTO · GRN · DN Ops"
+          />
         </div>
 
         {/* Zone 2: Desktop Full-Screen Navigation Links */}
@@ -1997,8 +2100,11 @@ export default function App() {
           ))}
         </nav>
 
-        {/* Zone 3: Live Clock with Date + SKU Master + Excel Download + Light/Grey/Dark Theme + Logout */}
+        {/* Zone 3: Live Clock + Mobile/PC App Install + Notifications + SKU Master + Excel + Theme Switcher + Logout */}
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          {/* Mobile & Computer App Direct Install Button */}
+          <PWAInstallButton darkMode={darkMode} />
+
           {/* Live Clock with Date */}
           <div
             className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] lg:text-xs font-mono ${
@@ -2017,6 +2123,32 @@ export default function App() {
               {formattedLiveTime}
             </span>
           </div>
+
+          {/* Ops Alert & Notification Bell */}
+          <button
+            type="button"
+            onClick={() => setIsNotificationOpen((prev) => !prev)}
+            title="Operations Notifications (Expiry & Today's Appointments)"
+            className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-[11px] sm:text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer relative ${
+              visibleNotifications.length > 0
+                ? 'border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20'
+                : darkMode
+                ? 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            {todayAppointmentNotifications.length > 0 || expiredNotifications.length > 0 ? (
+              <BellRing className="w-3.5 h-3.5 text-orange-500 animate-bounce shrink-0" />
+            ) : (
+              <Bell className="w-3.5 h-3.5 shrink-0" />
+            )}
+            <span className="hidden sm:inline">Notifications</span>
+            {visibleNotifications.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-red-600 text-white min-w-4 text-center leading-none">
+                {visibleNotifications.length}
+              </span>
+            )}
+          </button>
 
           <button
             type="button"
@@ -2113,6 +2245,16 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* Offline Status Connectivity Banner */}
+      {!isOnline && (
+        <div className="w-full bg-amber-500 text-slate-950 px-4 py-2 text-xs font-bold flex items-center justify-center gap-2 shadow-xs">
+          <WifiOff className="w-4 h-4 shrink-0" />
+          <span>
+            Offline Mode: Working from local cached data. Changes will sync automatically when internet connection is restored.
+          </span>
+        </div>
+      )}
 
       {/* Responsive Sub-Header: Employee Identity + Live Active Permissions + Scrollable Navigation Bar */}
       <div
@@ -2231,37 +2373,75 @@ export default function App() {
             </div>
           </div>
 
-          <div className="pb-3 sm:pb-0 border-b sm:border-b-0 sm:pr-4 sm:border-r border-slate-200 dark:border-slate-800">
-            <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-              <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-              <span>Expiring POs (≤ 7 Days)</span>
+          {/* Metric 3: Today's Appointments (Live Alert) */}
+          <div
+            onClick={() => setIsNotificationOpen(true)}
+            className={`pb-3 sm:pb-0 border-b sm:border-b-0 sm:pr-4 sm:border-r border-slate-200 dark:border-slate-800 cursor-pointer transition-colors ${
+              todayAppointmentNotifications.length > 0 ? 'hover:bg-amber-500/5' : ''
+            }`}
+          >
+            <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span>Today's Appointments</span>
+              </span>
+              {todayAppointmentNotifications.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-amber-500 text-white animate-pulse">
+                  TODAY
+                </span>
+              )}
             </div>
             <div
               className={`text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 ${
-                expiringPoCount > 0
-                  ? 'text-red-600 dark:text-red-400'
-                  : 'text-slate-500 dark:text-slate-400'
+                todayAppointmentNotifications.length > 0
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-slate-700 dark:text-slate-300'
               }`}
             >
-              {expiringPoCount}
+              {todayAppointmentNotifications.length}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
-              PO Entry & In Transit Alert
+              {todayAppointmentNotifications.length > 0
+                ? 'Warehouse check-in scheduled for TODAY'
+                : 'No appointments scheduled for today'}
             </div>
           </div>
 
-          <div className="pb-3 sm:pb-0 border-b sm:border-b-0 lg:pr-4 lg:border-r border-slate-200 dark:border-slate-800">
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              Inwarded GRN Records
+          {/* Metric 4: Expired & Expiring POs (Live Warning) */}
+          <div
+            onClick={() => setIsNotificationOpen(true)}
+            className={`pb-3 sm:pb-0 border-b sm:border-b-0 lg:pr-4 lg:border-r border-slate-200 dark:border-slate-800 cursor-pointer transition-colors ${
+              expiredNotifications.length > 0 ? 'hover:bg-red-500/5' : ''
+            }`}
+          >
+            <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                <span>Expired POs</span>
+              </span>
+              {expiredNotifications.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-red-600 text-white animate-pulse">
+                  ACTION
+                </span>
+              )}
             </div>
-            <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 text-emerald-600 dark:text-emerald-400">
-              {purchaseOrders.filter((p) => p.workflowStage === 'GRN').length}
+            <div
+              className={`text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 ${
+                expiredNotifications.length > 0
+                  ? 'text-red-600 dark:text-red-400 font-extrabold'
+                  : 'text-slate-700 dark:text-slate-300'
+              }`}
+            >
+              {expiredNotifications.length}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
-              With DN Tracking Support
+              {expiredNotifications.length > 0
+                ? `${expiredNotifications.length} PO(s) have passed expiry date`
+                : `${expiringPoCount} expiring soon (≤ 7 days)`}
             </div>
           </div>
 
+          {/* Metric 5: DN Tracker Records */}
           <div>
             <div className="text-xs text-slate-500 dark:text-slate-400">
               Instamart DN Tracker
@@ -2277,6 +2457,89 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* High-Visibility Notification Alert Banners */}
+        {todayAppointmentNotifications.length > 0 && (
+          <div className="p-3 sm:p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-amber-500 text-white shrink-0 mt-0.5 animate-pulse">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-extrabold text-[11px] uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300">
+                    TODAY'S APPOINTMENT NOTIFICATION
+                  </span>
+                  <span className="text-xs font-bold font-mono">
+                    {todayAppointmentNotifications.length} Purchase Order(s) Due Today ({formattedLiveDate})
+                  </span>
+                </div>
+                <p className="text-xs text-amber-800/90 dark:text-amber-200/90 mt-1">
+                  Active shipments have appointment scheduled for TODAY at Instamart warehouses (
+                  {todayAppointmentNotifications
+                    .slice(0, 3)
+                    .map((n) => `${n.poNumber} @ ${n.warehouseName}`)
+                    .join(', ')}
+                  {todayAppointmentNotifications.length > 3
+                    ? ` + ${todayAppointmentNotifications.length - 3} more`
+                    : ''}
+                  ). Please confirm delivery arrival and inward gate pass.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsNotificationOpen(true)}
+                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+              >
+                <span>View Today's Appointments</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {expiredNotifications.length > 0 && (
+          <div className="p-3 sm:p-4 rounded-xl border border-red-500/40 bg-red-500/10 text-red-900 dark:text-red-200 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-red-600 text-white shrink-0 mt-0.5 animate-pulse">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-extrabold text-[11px] uppercase px-2 py-0.5 rounded bg-red-500/20 text-red-800 dark:text-red-300">
+                    PO DATE EXPIRED NOTIFICATION
+                  </span>
+                  <span className="text-xs font-bold font-mono">
+                    {expiredNotifications.length} Overdue Purchase Order(s)
+                  </span>
+                </div>
+                <p className="text-xs text-red-800/90 dark:text-red-200/90 mt-1">
+                  PO Expiry date has passed for (
+                  {expiredNotifications
+                    .slice(0, 3)
+                    .map((n) => `${n.poNumber} (${n.warehouseName})`)
+                    .join(', ')}
+                  {expiredNotifications.length > 3
+                    ? ` + ${expiredNotifications.length - 3} more`
+                    : ''}
+                  ). Action required: Request PO date extension, expedite inwarding, or re-route.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsNotificationOpen(true)}
+                className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+              >
+                <span>Review Expired POs</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Action & Export Toolbar */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -2741,14 +3004,17 @@ export default function App() {
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                     {poEntryList.map((po) => {
                       const expiryInfo = getPoExpiryStatus(po.poExpiryDate);
+                      const aptStatus = getAppointmentStatus(po.appointmentDate);
                       return (
                         <tr
                           key={po.id}
                           className={`transition-colors ${
                             expiryInfo.isExpired
-                              ? 'bg-red-500/10 hover:bg-red-500/15'
+                              ? 'bg-red-500/10 hover:bg-red-500/15 border-l-4 border-l-red-500'
+                              : aptStatus.isToday
+                              ? 'bg-amber-500/10 hover:bg-amber-500/15 border-l-4 border-l-amber-500'
                               : expiryInfo.isExpiringSoon
-                              ? 'bg-amber-500/10 hover:bg-amber-500/15'
+                              ? 'bg-amber-500/5 hover:bg-amber-500/10'
                               : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
                           }`}
                         >
@@ -2761,24 +3027,31 @@ export default function App() {
                             </div>
                             {po.poExpiryDate && (
                               <div className="mt-1 flex items-center gap-1">
-                                {(expiryInfo.isExpiringSoon || expiryInfo.isExpired) && (
-                                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                                )}
                                 <span
-                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 ${
                                     expiryInfo.isExpired
-                                      ? 'bg-red-500/20 text-red-600 dark:text-red-400'
+                                      ? 'bg-red-600 text-white font-extrabold animate-pulse'
+                                      : expiryInfo.isExpiringToday
+                                      ? 'bg-red-500 text-white font-extrabold animate-pulse'
                                       : expiryInfo.isExpiringSoon
                                       ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
                                       : 'text-slate-500'
                                   }`}
                                 >
-                                  Exp: {po.poExpiryDate}
-                                  {expiryInfo.isExpired
-                                    ? ' (EXPIRED)'
-                                    : expiryInfo.isExpiringSoon
-                                    ? ` (${expiryInfo.daysLeft}d left)`
-                                    : ''}
+                                  {(expiryInfo.isExpired ||
+                                    expiryInfo.isExpiringToday ||
+                                    expiryInfo.isExpiringSoon) && (
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                  )}
+                                  <span>
+                                    {expiryInfo.isExpired
+                                      ? `EXPIRED (${Math.abs(expiryInfo.daysLeft || 0)}d ago)`
+                                      : expiryInfo.isExpiringToday
+                                      ? 'EXPIRES TODAY'
+                                      : expiryInfo.isExpiringSoon
+                                      ? `Exp: ${po.poExpiryDate} (${expiryInfo.daysLeft}d left)`
+                                      : `Exp: ${po.poExpiryDate}`}
+                                  </span>
                                 </span>
                               </div>
                             )}
@@ -2808,6 +3081,26 @@ export default function App() {
                             <div className="text-[11px] text-slate-500">
                               {po.appointmentDate || '-'}
                             </div>
+                            {po.appointmentDate && (
+                              <>
+                                {aptStatus.isToday && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500 text-white font-extrabold text-[10px] animate-pulse shadow-xs">
+                                      <Calendar className="w-3 h-3" />
+                                      <span>APPOINTMENT TODAY!</span>
+                                    </span>
+                                  </div>
+                                )}
+                                {aptStatus.isTomorrow && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold text-[10px]">
+                                      <Calendar className="w-3 h-3" />
+                                      <span>Tomorrow</span>
+                                    </span>
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </td>
                           <td className="py-3 px-4 whitespace-nowrap">
                             <div className="font-mono">{po.so || '-'}</div>
@@ -3358,14 +3651,17 @@ export default function App() {
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                     {inTransitList.map((po) => {
                       const expiryInfo = getPoExpiryStatus(po.poExpiryDate);
+                      const aptStatus = getAppointmentStatus(po.appointmentDate);
                       return (
                         <tr
                           key={po.id}
                           className={`transition-colors ${
                             expiryInfo.isExpired
-                              ? 'bg-red-500/10 hover:bg-red-500/15'
+                              ? 'bg-red-500/10 hover:bg-red-500/15 border-l-4 border-l-red-500'
+                              : aptStatus.isToday
+                              ? 'bg-amber-500/10 hover:bg-amber-500/15 border-l-4 border-l-amber-500'
                               : expiryInfo.isExpiringSoon
-                              ? 'bg-amber-500/10 hover:bg-amber-500/15'
+                              ? 'bg-amber-500/5 hover:bg-amber-500/10'
                               : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
                           }`}
                         >
@@ -3378,24 +3674,31 @@ export default function App() {
                             </div>
                             {po.poExpiryDate && (
                               <div className="mt-1 flex items-center gap-1">
-                                {(expiryInfo.isExpiringSoon || expiryInfo.isExpired) && (
-                                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                                )}
                                 <span
-                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 ${
                                     expiryInfo.isExpired
-                                      ? 'bg-red-500/20 text-red-600 dark:text-red-400'
+                                      ? 'bg-red-600 text-white font-extrabold animate-pulse'
+                                      : expiryInfo.isExpiringToday
+                                      ? 'bg-red-500 text-white font-extrabold animate-pulse'
                                       : expiryInfo.isExpiringSoon
                                       ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
                                       : 'text-slate-500'
                                   }`}
                                 >
-                                  Exp: {po.poExpiryDate}
-                                  {expiryInfo.isExpired
-                                    ? ' (EXPIRED)'
-                                    : expiryInfo.isExpiringSoon
-                                    ? ` (${expiryInfo.daysLeft}d left)`
-                                    : ''}
+                                  {(expiryInfo.isExpired ||
+                                    expiryInfo.isExpiringToday ||
+                                    expiryInfo.isExpiringSoon) && (
+                                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                                  )}
+                                  <span>
+                                    {expiryInfo.isExpired
+                                      ? `EXPIRED (${Math.abs(expiryInfo.daysLeft || 0)}d ago)`
+                                      : expiryInfo.isExpiringToday
+                                      ? 'EXPIRES TODAY'
+                                      : expiryInfo.isExpiringSoon
+                                      ? `Exp: ${po.poExpiryDate} (${expiryInfo.daysLeft}d left)`
+                                      : `Exp: ${po.poExpiryDate}`}
+                                  </span>
                                 </span>
                               </div>
                             )}
@@ -3425,6 +3728,26 @@ export default function App() {
                             <div className="text-[11px] text-slate-500">
                               {po.appointmentDate || '-'}
                             </div>
+                            {po.appointmentDate && (
+                              <>
+                                {aptStatus.isToday && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500 text-white font-extrabold text-[10px] animate-pulse shadow-xs">
+                                      <Calendar className="w-3 h-3" />
+                                      <span>APPOINTMENT TODAY!</span>
+                                    </span>
+                                  </div>
+                                )}
+                                {aptStatus.isTomorrow && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold text-[10px]">
+                                      <Calendar className="w-3 h-3" />
+                                      <span>Tomorrow</span>
+                                    </span>
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </td>
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
                             <div>{po.noOfBoxes} Boxes</div>
@@ -4723,6 +5046,25 @@ export default function App() {
         onCancel={() => setConfirmState((prev) => ({ ...prev, isOpen: false }))}
         darkMode={darkMode}
       />
+
+      {/* Ops Notification Center Dropdown / Modal */}
+      <NotificationCenter
+        isOpen={isNotificationOpen}
+        onClose={() => setIsNotificationOpen(false)}
+        notifications={visibleNotifications}
+        onSelectPo={handleSelectPoFromNotification}
+        onDismissNotification={handleDismissNotification}
+        onDismissAll={handleDismissAllNotifications}
+        darkMode={darkMode}
+        isGrey={isGrey}
+        soundEnabled={soundEnabled}
+        onToggleSound={toggleSound}
+        hasBrowserNotificationPermission={hasBrowserNotificationPermission}
+        onRequestBrowserNotification={handleRequestBrowserNotification}
+      />
+
+      {/* Floating Install Prompt Banner for Mobile & Computer Users */}
+      <FloatingInstallBanner darkMode={darkMode} />
     </div>
   );
 }
