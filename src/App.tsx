@@ -1311,6 +1311,28 @@ export default function App() {
     });
   };
 
+  // Admin: Clear All Activity & Audit Trail Records
+  const requestClearAuditLogs = () => {
+    if (!isAdmin) return;
+    setConfirmState({
+      isOpen: true,
+      title: 'Clear All Employee Activity Audit Trail Logs?',
+      description:
+        'Are you sure you want to delete all activity & audit logs from "05. Admin Employee Activity & Data Entry Audit Trail"? This will clear all historical action logs.',
+      confirmLabel: 'Clear All Audit Logs',
+      onConfirm: async () => {
+        setConfirmState((prev) => ({ ...prev, isOpen: false }));
+        try {
+          for (const l of activityLogs) {
+            await deleteDoc(doc(db, 'activity_logs', l.id));
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, 'activity_logs');
+        }
+      },
+    });
+  };
+
   // Admin: Clear All Uploaded / Sample Records (Purchase Orders, DN Records, Catalog)
   const requestClearAllData = () => {
     if (!isAdmin) return;
@@ -4390,15 +4412,25 @@ export default function App() {
                   : 'bg-white border-slate-200'
               }`}
             >
-              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-bold">
-                    05. Admin Employee Activity & Data Entry Audit Trail
+                    05. Admin Employee Activity & Data Entry Audit Trail ({filteredLogs.length})
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     Every time any Backoffice, Warehouse, Logistics, Print, or Admin employee creates or updates a PO, In-Transit status, GRN, POC Contact, or DN record, their Employee Name and Employee ID are displayed here.
                   </p>
                 </div>
+                {isAdmin && filteredLogs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={requestClearAuditLogs}
+                    className="px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Clear All Audit Trail Data</span>
+                  </button>
+                )}
               </div>
 
               {filteredLogs.length === 0 ? (
