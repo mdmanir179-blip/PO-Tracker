@@ -312,14 +312,14 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base sm:text-lg font-bold tracking-tight">
-                PO Payments & Financial Tracker (পেমেন্ট ট্র্যাকার)
+                PO Payments & Financial Tracker
               </h2>
               <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-orange-500/15 text-orange-600 dark:text-orange-400">
                 {purchaseOrders.length} POs Tracked
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Automated 30-day payment term tracking · Partition/Partial payments · Instant Overdue Alerts & Financial Ledger
+              Automated 1-month payment term tracking from GRN Date · Partition/Partial payments · Instant Overdue Alerts & Financial Ledger
             </p>
           </div>
         </div>
@@ -526,7 +526,7 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
             }`}
           >
             <AlertTriangle className="w-3.5 h-3.5" />
-            <span>Overdue &gt;30 Days ({metrics.overdueCount})</span>
+            <span>Overdue &gt;1 Mo ({metrics.overdueCount})</span>
           </button>
           <button
             type="button"
@@ -753,7 +753,12 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
 
                       {/* Term & Aging */}
                       <td className="py-3.5 px-4 font-mono text-xs">
-                        <div className="text-slate-700 dark:text-slate-300">
+                        {details.hasGrn && (
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                            GRN: {details.grnDate}
+                          </div>
+                        )}
+                        <div className="text-slate-700 dark:text-slate-300 font-semibold">
                           Due: {details.dueDate}
                         </div>
                         <div
@@ -764,8 +769,10 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
                           }`}
                         >
                           {details.isOverdue
-                            ? `Exceeded 30-day limit by ${details.overdueDays}d`
-                            : `${30 - details.daysElapsed}d remaining in 30d term`}
+                            ? `Overdue: ${details.overdueDays}d past 1 month`
+                            : details.hasGrn
+                            ? `${Math.max(0, 30 - details.daysElapsed)}d left in 1-mo term`
+                            : 'Pending GRN'}
                         </div>
                       </td>
 
@@ -841,7 +848,7 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
                   <CreditCard className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold">Record Payment (পেমেন্ট যোগ করুন)</h3>
+                  <h3 className="text-sm font-bold">Record Payment</h3>
                   <p className="text-[11px] text-slate-400 font-mono">PO: {activePaymentPo.poNumber}</p>
                 </div>
               </div>
@@ -1046,7 +1053,7 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
             }`}
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold">Edit Total PO Value (টাকা)</h3>
+              <h3 className="text-sm font-bold">Edit Total PO Value (₹)</h3>
               <button
                 type="button"
                 onClick={() => setEditingAmountPo(null)}

@@ -304,12 +304,20 @@ export function computeNotifications(purchaseOrders: PurchaseOrder[]): AppNotifi
       }
     }
 
-    // 3. PO Payment & Overdue (> 30 Days) / Partial Payment Tracking Check
-    const payBaseDate = parseDateOnly(po.orderDate) || parseDateOnly(po.appointmentDate) || new Date();
+    // 3. PO Payment & Overdue (Calculated from GRN Date: > 1 Month) / Partial Payment Tracking Check
+    const explicitGrnDate = (po.grnDate || '').trim();
+    const isGrnStage = po.workflowStage === 'GRN' || po.inwardStatus === 'SUCCESS' || Boolean(po.grnNumber && po.grnNumber.trim());
+    const effectiveGrnDateStr = explicitGrnDate || (isGrnStage ? (po.appointmentDate || po.shipDate || po.orderDate || '') : '');
+    const hasGrn = Boolean(effectiveGrnDateStr);
+
     const todayNow = new Date();
     const todayDate = new Date(todayNow.getFullYear(), todayNow.getMonth(), todayNow.getDate());
+    const payBaseDate = parseDateOnly(effectiveGrnDateStr) || parseDateOnly(po.orderDate) || parseDateOnly(po.appointmentDate) || todayDate;
     const payDaysElapsed = Math.max(0, Math.floor((todayDate.getTime() - payBaseDate.getTime()) / (1000 * 60 * 60 * 24)));
     
+    const dueObj = new Date(payBaseDate);
+    dueObj.setMonth(dueObj.getMonth() + 1);
+
     const hasExplicit = typeof po.totalAmount === 'number' && po.totalAmount > 0;
     const estVal = (po.totalQty && po.totalQty > 0 ? po.totalQty : 1) * 320;
     const totalVal = hasExplicit ? po.totalAmount! : (po.totalAmount === 0 ? 0 : estVal);
@@ -318,20 +326,23 @@ export function computeNotifications(purchaseOrders: PurchaseOrder[]): AppNotifi
     const isExplicitlyPaid = po.paymentStatus === 'PAID' || (totalVal > 0 && paidVal >= totalVal);
 
     if (!isExplicitlyPaid && po.paymentStatus !== 'CANCELLED' && dueVal > 0) {
-      if (payDaysElapsed > 30) {
-        const overdueDays = payDaysElapsed - 30;
+      const isOverdueFromGrn = hasGrn && (todayDate.getTime() > dueObj.getTime() || payDaysElapsed > 30);
+      const isOverdueFromExplicitDue = Boolean(po.paymentDueDate && parseDateOnly(po.paymentDueDate) && todayDate.getTime() > parseDateOnly(po.paymentDueDate)!.getTime());
+
+      if (isOverdueFromGrn || isOverdueFromExplicitDue) {
+        const overdueDays = Math.max(1, isOverdueFromGrn ? Math.floor((todayDate.getTime() - dueObj.getTime()) / (1000 * 60 * 60 * 24)) : (payDaysElapsed - 30));
         const isPartial = paidVal > 0;
         notifications.push({
           id: `pay_overdue_${po.id}`,
           type: 'PAYMENT_OVERDUE',
           severity: overdueDays > 14 ? 'critical' : 'urgent',
-          title: `💳 Payment OVERDUE: ₹${Math.round(dueVal).toLocaleString('en-IN')} (${overdueDays}d past 30 days)`,
-          message: `PO #${po.poNumber} has ${isPartial ? `partial payment (${Math.round((paidVal / (totalVal || 1)) * 100)}% paid)` : 'no payment'}! Pending Due: ₹${Math.round(dueVal).toLocaleString('en-IN')} (Total: ₹${Math.round(totalVal).toLocaleString('en-IN')}). Entered ${payDaysElapsed} days ago for ${po.warehouseName}.`,
+          title: `💳 Payment OVERDUE: ₹${Math.round(dueVal).toLocaleString('en-IN')} (${overdueDays}d past 1 month of GRN)`,
+          message: `PO #${po.poNumber} has ${isPartial ? `partial payment (${Math.round((paidVal / (totalVal || 1)) * 100)}% paid)` : 'no payment'}! Pending Due: ₹${Math.round(dueVal).toLocaleString('en-IN')} (Total: ₹${Math.round(totalVal).toLocaleString('en-IN')}). ${hasGrn ? `GRN Date: ${effectiveGrnDateStr} (>1 month elapsed).` : `Created ${payDaysElapsed} days ago.`} Warehouse: ${po.warehouseName}.`,
           poId: po.id,
           poNumber: po.poNumber,
-          targetStage: po.workflowStage,
+          targetStage: 'PAYMENTS' as any,
           warehouseName: po.warehouseName,
-          dateStr: po.orderDate,
+          dateStr: effectiveGrnDateStr || po.orderDate,
           daysDiff: -overdueDays,
         });
       } else if (paidVal > 0 && dueVal > 0) {
@@ -343,7 +354,7 @@ export function computeNotifications(purchaseOrders: PurchaseOrder[]): AppNotifi
           message: `PO #${po.poNumber} partition paid (₹${Math.round(paidVal).toLocaleString('en-IN')} of ₹${Math.round(totalVal).toLocaleString('en-IN')}). Remaining balance of ₹${Math.round(dueVal).toLocaleString('en-IN')} due soon.`,
           poId: po.id,
           poNumber: po.poNumber,
-          targetStage: po.workflowStage,
+          targetStage: 'PAYMENTS' as any,
           warehouseName: po.warehouseName,
           dateStr: po.orderDate,
           daysDiff: 30 - payDaysElapsed,

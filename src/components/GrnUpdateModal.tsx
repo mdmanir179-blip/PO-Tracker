@@ -9,6 +9,7 @@ interface GrnUpdateModalProps {
   mode: 'INWARD_TO_GRN' | 'UPDATE_GRN_DN';
   onConfirm: (data: {
     grnNumber: string;
+    grnDate: string;
     hasDn: boolean;
     grnDnSummary: string;
     status: string;
@@ -27,6 +28,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
   darkMode,
 }) => {
   const [grnNumber, setGrnNumber] = useState('');
+  const [grnDate, setGrnDate] = useState('');
   const [hasDn, setHasDn] = useState(false);
   const [grnDnSummary, setGrnDnSummary] = useState('');
   const [status, setStatus] = useState('GRN Completed');
@@ -36,6 +38,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
   useEffect(() => {
     if (po) {
       setGrnNumber(po.grnNumber || `GRN-${po.poNumber.replace(/[^0-9A-Z]/gi, '').slice(-6)}`);
+      setGrnDate(po.grnDate || po.appointmentDate || po.shipDate || new Date().toISOString().slice(0, 10));
       setHasDn(po.hasDn || false);
       setGrnDnSummary(po.grnDnSummary || '');
       setStatus(po.workflowStage === 'GRN' ? po.status : 'GRN Completed');
@@ -56,6 +59,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
     try {
       await onConfirm({
         grnNumber: grnNumber.trim(),
+        grnDate: grnDate.trim() || new Date().toISOString().slice(0, 10),
         hasDn,
         grnDnSummary: grnDnSummary.trim(),
         status,
@@ -115,16 +119,30 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-semibold mb-1">GRN Number *</label>
-            <input
-              type="text"
-              required
-              value={grnNumber}
-              onChange={(e) => setGrnNumber(e.target.value)}
-              placeholder="e.g. GRN-IM-90214"
-              className={`${inputClass} font-mono`}
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold mb-1">GRN Number *</label>
+              <input
+                type="text"
+                required
+                value={grnNumber}
+                onChange={(e) => setGrnNumber(e.target.value)}
+                placeholder="e.g. GRN-IM-90214"
+                className={`${inputClass} font-mono`}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1">
+                GRN Date * <span className="text-[11px] font-normal text-slate-400">(Payment Overdue Base)</span>
+              </label>
+              <input
+                type="date"
+                required
+                value={grnDate}
+                onChange={(e) => setGrnDate(e.target.value)}
+                className={inputClass}
+              />
+            </div>
           </div>
 
           <div>

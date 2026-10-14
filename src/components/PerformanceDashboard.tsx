@@ -714,7 +714,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  04. PO Financials & Payment Action Analytics (পেমেন্ট অ্যাকশন ও চার্ট)
+                  04. PO Financials & Payment Action Analytics
                 </h3>
                 {paymentMetrics.overdueCount > 0 && (
                   <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-red-600 text-white animate-pulse">
@@ -723,7 +723,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
                 )}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Warehouse financial breakdown · 30-Day overdue liability analysis · Immediate payment action pipeline
+                Warehouse financial breakdown · 1-Month GRN overdue liability analysis · Immediate payment action pipeline
               </p>
             </div>
           </div>

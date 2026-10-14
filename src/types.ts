@@ -75,6 +75,7 @@ export interface PurchaseOrder {
   workflowStage: WorkflowStage;
   inwardStatus: 'PENDING' | 'SUCCESS';
   grnNumber: string;
+  grnDate?: string;
   grnDnSummary: string;
   hasDn: boolean;
   // RTO Management System Fields

@@ -600,10 +600,10 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
                 </div>
                 <div>
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
-                    PO Billing & Payment Tracking (পেমেন্ট ট্র্যাকার)
+                    PO Billing & Payment Tracking
                   </h4>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Set PO invoice amount & payment terms · Auto-tracks overdue if unpaid after 30 days
+                    Set PO invoice amount & payment terms · Auto-tracks overdue if unpaid after 1 month from GRN Date
                   </p>
                 </div>
               </div>

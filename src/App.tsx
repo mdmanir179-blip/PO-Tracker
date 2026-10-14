@@ -1630,6 +1630,7 @@ export default function App() {
   // Confirm Inward Success -> Shift PO to GRN or update GRN DN details
   const handleConfirmGrnUpdate = async (data: {
     grnNumber: string;
+    grnDate: string;
     hasDn: boolean;
     grnDnSummary: string;
     status: string;
@@ -1638,6 +1639,12 @@ export default function App() {
     const poRef = doc(db, 'purchase_orders', grnTargetPo.id);
 
     const isTransitionFromTransit = grnTargetPo.workflowStage === 'IN_TRANSIT';
+    const effectiveGrnDate = data.grnDate ? data.grnDate.slice(0, 30) : new Date().toISOString().slice(0, 10);
+    
+    // Auto-calculate 1-month payment maturity date from GRN Date
+    const dueObj = new Date(effectiveGrnDate);
+    dueObj.setMonth(dueObj.getMonth() + 1);
+    const autoPaymentDueDate = dueObj.toISOString().slice(0, 10);
 
     try {
       if (isTransitionFromTransit) {
@@ -1646,8 +1653,10 @@ export default function App() {
           inwardStatus: 'SUCCESS',
           status: data.status.slice(0, 60),
           grnNumber: data.grnNumber.slice(0, 80),
+          grnDate: effectiveGrnDate,
           grnDnSummary: data.grnDnSummary.slice(0, 500),
           hasDn: data.hasDn,
+          paymentDueDate: grnTargetPo.paymentDueDate || autoPaymentDueDate,
           updatedByUid: firebaseUser.uid,
           updatedByName: employeeProfile.employeeName.slice(0, 100),
           updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
@@ -1657,9 +1666,11 @@ export default function App() {
         await updateDoc(poRef, {
           status: data.status.slice(0, 60),
           grnNumber: data.grnNumber.slice(0, 80),
+          grnDate: effectiveGrnDate,
           grnDnSummary: data.grnDnSummary.slice(0, 500),
           hasDn: data.hasDn,
           comment: grnTargetPo.comment,
+          paymentDueDate: grnTargetPo.paymentDueDate || autoPaymentDueDate,
           updatedByUid: firebaseUser.uid,
           updatedByName: employeeProfile.employeeName.slice(0, 100),
           updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
@@ -2130,11 +2141,6 @@ export default function App() {
       shortLabel: `PO Entry (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length})`,
     },
     {
-      id: 'PAYMENTS',
-      label: `PO Payments (${paymentLedgerMetrics.overdueCount > 0 ? `🚨 ${paymentLedgerMetrics.overdueCount} Overdue` : `${purchaseOrders.length}`})`,
-      shortLabel: `Payments (${paymentLedgerMetrics.overdueCount > 0 ? `🚨${paymentLedgerMetrics.overdueCount}` : `${purchaseOrders.length}`})`,
-    },
-    {
       id: 'LOGISTICS',
       label: `Logistics & Delivery (${purchaseOrders.length})`,
       shortLabel: `Logistics (${purchaseOrders.length})`,
@@ -2168,6 +2174,11 @@ export default function App() {
       id: 'POC_DIRECTORY',
       label: `Instamart POC Team (${pocContacts.length})`,
       shortLabel: `POC Team (${pocContacts.length})`,
+    },
+    {
+      id: 'PAYMENTS',
+      label: `PO Payments (${paymentLedgerMetrics.overdueCount > 0 ? `🚨 ${paymentLedgerMetrics.overdueCount} Overdue` : `${purchaseOrders.length}`})`,
+      shortLabel: `PO Payments (${paymentLedgerMetrics.overdueCount > 0 ? `🚨 ${paymentLedgerMetrics.overdueCount} Overdue` : 'Clear'})`,
     },
     {
       id: 'ADMIN_AUDIT',

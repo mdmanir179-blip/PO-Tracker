@@ -76,7 +76,7 @@ service cloud.firestore {
           'so', 'status', 'noOfBoxes', 'boxDimensions', 'logisticsPortal',
           'pickupTrackingId', 'puc', 'asn', 'clearBagNo', 'comment',
           'pickupStatus', 'printVerified', 'printVerifiedBy',
-          'workflowStage', 'inwardStatus', 'grnNumber',
+          'workflowStage', 'inwardStatus', 'grnNumber', 'grnDate',
           'grnDnSummary', 'hasDn',
           'isRto', 'rtoPickedStatus', 'rtoTrackingId', 'rtoCourierPartner',
           'rtoPickDate', 'rtoReceivedAtWh', 'rtoReason', 'rtoRemarks',
