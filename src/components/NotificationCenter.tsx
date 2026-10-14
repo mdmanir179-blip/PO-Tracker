@@ -11,7 +11,7 @@ import {
   VolumeX,
   ExternalLink,
   ChevronRight,
-  ShieldAlert,
+  CreditCard,
 } from 'lucide-react';
 import { AppNotification, NotificationType, WorkflowStage } from '../types';
 
@@ -20,6 +20,7 @@ interface NotificationCenterProps {
   onClose: () => void;
   notifications: AppNotification[];
   onSelectPo: (poNumber: string, stage: WorkflowStage) => void;
+  onOpenPaymentPo?: (poNumber: string) => void;
   onDismissNotification: (id: string) => void;
   onDismissAll: () => void;
   darkMode: boolean;
@@ -35,6 +36,7 @@ export function NotificationCenter({
   onClose,
   notifications,
   onSelectPo,
+  onOpenPaymentPo,
   onDismissNotification,
   onDismissAll,
   darkMode,
@@ -44,9 +46,13 @@ export function NotificationCenter({
   hasBrowserNotificationPermission,
   onRequestBrowserNotification,
 }: NotificationCenterProps) {
-  const [filter, setFilter] = useState<'ALL' | 'EXPIRED' | 'APPOINTMENT' | 'SOON'>('ALL');
+  const [filter, setFilter] = useState<'ALL' | 'PAYMENT' | 'EXPIRED' | 'APPOINTMENT' | 'SOON'>('ALL');
 
   if (!isOpen) return null;
+
+  const paymentCount = notifications.filter(
+    (n) => n.type === 'PAYMENT_OVERDUE' || n.type === 'PAYMENT_PARTIAL_DUE'
+  ).length;
 
   const expiredCount = notifications.filter(
     (n) => n.type === 'EXPIRED' || n.type === 'EXPIRING_TODAY'
@@ -61,6 +67,7 @@ export function NotificationCenter({
   ).length;
 
   const filteredNotifications = notifications.filter((n) => {
+    if (filter === 'PAYMENT') return n.type === 'PAYMENT_OVERDUE' || n.type === 'PAYMENT_PARTIAL_DUE';
     if (filter === 'EXPIRED') return n.type === 'EXPIRED' || n.type === 'EXPIRING_TODAY';
     if (filter === 'APPOINTMENT') return n.type === 'APPOINTMENT_TODAY';
     if (filter === 'SOON') return n.type === 'EXPIRING_SOON' || n.type === 'APPOINTMENT_TOMORROW';
@@ -175,6 +182,18 @@ export function NotificationCenter({
           </button>
           <button
             type="button"
+            onClick={() => setFilter('PAYMENT')}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap cursor-pointer transition-colors flex items-center gap-1.5 ${
+              filter === 'PAYMENT'
+                ? 'bg-red-600 text-white shadow-xs'
+                : 'text-red-600 dark:text-red-400 hover:bg-red-500/10'
+            }`}
+          >
+            <CreditCard className="w-3.5 h-3.5" />
+            <span>Payment Overdue &amp; Due ({paymentCount})</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setFilter('APPOINTMENT')}
             className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors flex items-center gap-1 ${
               filter === 'APPOINTMENT'
@@ -225,6 +244,7 @@ export function NotificationCenter({
             </div>
           ) : (
             filteredNotifications.map((n) => {
+              const isPayment = n.type === 'PAYMENT_OVERDUE' || n.type === 'PAYMENT_PARTIAL_DUE';
               const isExpired = n.type === 'EXPIRED' || n.type === 'EXPIRING_TODAY';
               const isTodayApt = n.type === 'APPOINTMENT_TODAY';
 
@@ -232,7 +252,9 @@ export function NotificationCenter({
                 <div
                   key={n.id}
                   className={`p-3.5 rounded-xl border transition-all ${
-                    isExpired
+                    isPayment
+                      ? 'border-red-500/50 bg-red-500/10 shadow-xs'
+                      : isExpired
                       ? 'border-red-500/40 bg-red-500/10'
                       : isTodayApt
                       ? 'border-amber-500/40 bg-amber-500/10 shadow-xs'
@@ -247,17 +269,21 @@ export function NotificationCenter({
                     <div className="flex items-start gap-2.5">
                       <div
                         className={`p-1.5 rounded-lg shrink-0 mt-0.5 ${
-                          isExpired
+                          isPayment
+                            ? 'bg-red-600 text-white animate-pulse'
+                            : isExpired
                             ? 'bg-red-500 text-white'
                             : isTodayApt
                             ? 'bg-amber-500 text-white animate-pulse'
                             : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                         }`}
                       >
-                        {isTodayApt ? (
+                        {isPayment ? (
+                          <CreditCard className="w-4 h-4" />
+                        ) : isTodayApt ? (
                           <Calendar className="w-4 h-4" />
                         ) : isExpired ? (
-                          <ShieldAlert className="w-4 h-4" />
+                          <AlertTriangle className="w-4 h-4" />
                         ) : (
                           <Clock className="w-4 h-4" />
                         )}
@@ -266,14 +292,16 @@ export function NotificationCenter({
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span
                             className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
-                              isExpired
+                              isPayment
+                                ? 'bg-red-600 text-white font-extrabold'
+                                : isExpired
                                 ? 'bg-red-500/20 text-red-600 dark:text-red-400'
                                 : isTodayApt
                                 ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 font-extrabold'
                                 : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                             }`}
                           >
-                            {n.type.replace('_', ' ')}
+                            {n.type.replace(/_/g, ' ')}
                           </span>
                           <span className="font-mono text-xs font-bold text-orange-600 dark:text-orange-400">
                             {n.poNumber}
@@ -307,18 +335,24 @@ export function NotificationCenter({
                     <button
                       type="button"
                       onClick={() => {
-                        onSelectPo(n.poNumber, n.targetStage);
+                        if (isPayment && onOpenPaymentPo) {
+                          onOpenPaymentPo(n.poNumber);
+                        } else {
+                          onSelectPo(n.poNumber, n.targetStage);
+                        }
                         onClose();
                       }}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-colors ${
-                        isExpired
+                        isPayment
+                          ? 'bg-red-600 hover:bg-red-500 text-white font-bold'
+                          : isExpired
                           ? 'bg-red-600 hover:bg-red-500 text-white'
                           : isTodayApt
                           ? 'bg-amber-600 hover:bg-amber-500 text-white'
                           : 'bg-orange-600 hover:bg-orange-500 text-white'
                       }`}
                     >
-                      <span>View PO & Shift Tab</span>
+                      <span>{isPayment ? 'Open Payment Tracker' : 'View PO & Shift Tab'}</span>
                       <ChevronRight className="w-3.5 h-3.5" />
                     </button>
                   </div>

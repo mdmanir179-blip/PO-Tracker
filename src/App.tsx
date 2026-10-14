@@ -45,6 +45,7 @@ import {
   ChevronRight,
   WifiOff,
   Smartphone,
+  CreditCard,
 } from 'lucide-react';
 import {
   db,
@@ -68,6 +69,8 @@ import {
   ActiveTab,
   WorkflowStage,
   AppNotification,
+  PaymentStatus,
+  PaymentTransaction,
 } from './types';
 import { AuthScreen } from './components/AuthScreen';
 import { PoFormModal, PoFormValues } from './components/PoFormModal';
@@ -75,6 +78,7 @@ import { DnFormModal, DnFormValues } from './components/DnFormModal';
 import { GrnUpdateModal } from './components/GrnUpdateModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
+import { PaymentTrackerTab } from './components/PaymentTrackerTab';
 import {
   EmployeeModal,
   EmployeeFormValues,
@@ -85,6 +89,7 @@ import { NotificationCenter } from './components/NotificationCenter';
 import { BrandLogo } from './components/BrandLogo';
 import { PWAInstallButton, FloatingInstallBanner } from './components/PWAInstallButton';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
+import { calculatePaymentDetails, computePaymentLedgerMetrics, formatINR } from './utils/paymentUtils';
 import {
   exportMasterWorkbookToExcel,
   exportPoListToExcel,
@@ -268,16 +273,37 @@ export default function App() {
     [visibleNotifications]
   );
 
-  // Play gentle sound alert & optional desktop notification when new appointment or expired PO arrives
+  const paymentOverdueNotifications = useMemo(
+    () =>
+      visibleNotifications.filter((n) => n.type === 'PAYMENT_OVERDUE'),
+    [visibleNotifications]
+  );
+
+  const paymentLedgerMetrics = useMemo(
+    () => computePaymentLedgerMetrics(purchaseOrders),
+    [purchaseOrders]
+  );
+
+  // Play gentle sound alert & optional desktop notification when new appointment, expired PO, or overdue payment arrives
   const prevAlertCountRef = useRef<number>(0);
   useEffect(() => {
-    const urgentCount = todayAppointmentNotifications.length + expiredNotifications.length;
+    const urgentCount =
+      todayAppointmentNotifications.length +
+      expiredNotifications.length +
+      paymentOverdueNotifications.length;
+
     if (urgentCount > 0 && urgentCount > prevAlertCountRef.current) {
       if (soundEnabled) {
         playNotificationChime();
       }
       if (hasBrowserNotificationPermission) {
-        if (todayAppointmentNotifications.length > 0) {
+        if (paymentOverdueNotifications.length > 0) {
+          triggerBrowserNotification(
+            `💳 Instamart Payment Alert: ${paymentOverdueNotifications.length} PO(s) Overdue!`,
+            `PO #${paymentOverdueNotifications[0].poNumber} has overdue payment exceeding 30-day term. Please review payments.`,
+            'po-payment-overdue'
+          );
+        } else if (todayAppointmentNotifications.length > 0) {
           triggerBrowserNotification(
             `📅 Instamart Alert: ${todayAppointmentNotifications.length} Appointment(s) Today!`,
             `PO #${todayAppointmentNotifications[0].poNumber} has appointment scheduled for TODAY at ${todayAppointmentNotifications[0].warehouseName}.`,
@@ -296,6 +322,7 @@ export default function App() {
   }, [
     todayAppointmentNotifications,
     expiredNotifications,
+    paymentOverdueNotifications,
     soundEnabled,
     hasBrowserNotificationPermission,
   ]);
@@ -1062,6 +1089,20 @@ export default function App() {
         comment: values.comment.trim().slice(0, 500),
         pickupStatus: values.pickupStatus,
         workflowStage: newStage as PurchaseOrder['workflowStage'],
+        totalAmount:
+          typeof values.totalAmount === 'number'
+            ? values.totalAmount
+            : editingPo.totalAmount !== undefined
+            ? editingPo.totalAmount
+            : (Number(values.totalQty) || 1) * 320,
+        paidAmount:
+          typeof values.paidAmount === 'number'
+            ? values.paidAmount
+            : editingPo.paidAmount || 0,
+        paymentStatus: values.paymentStatus || editingPo.paymentStatus || 'PENDING',
+        paymentDueDate: values.paymentDueDate || editingPo.paymentDueDate || '',
+        paymentNotes: values.paymentNotes || editingPo.paymentNotes || '',
+        paymentHistory: editingPo.paymentHistory || [],
         updatedByUid: firebaseUser.uid,
         updatedByName: employeeProfile.employeeName.slice(0, 100),
         updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
@@ -1139,6 +1180,15 @@ export default function App() {
         grnNumber: '',
         grnDnSummary: '',
         hasDn: false,
+        totalAmount:
+          typeof values.totalAmount === 'number' && values.totalAmount > 0
+            ? values.totalAmount
+            : (Number(values.totalQty) || 1) * 320,
+        paidAmount: Number(values.paidAmount) || 0,
+        paymentStatus: values.paymentStatus || 'PENDING',
+        paymentDueDate: values.paymentDueDate || '',
+        paymentNotes: values.paymentNotes || '',
+        paymentHistory: [],
         orgScope: 'instamart_ops',
         createdByUid: firebaseUser.uid,
         createdByName: employeeProfile.employeeName.slice(0, 100),
@@ -1172,7 +1222,7 @@ export default function App() {
             : 'Created New PO Entry',
           values.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PO_ENTRY',
           values.poNumber,
-          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created PO ${values.poNumber} for ${values.warehouseName}.`
+          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created PO ${values.poNumber} (Amount: ₹${(newPoDoc.totalAmount || 0).toLocaleString('en-IN')}) for ${values.warehouseName}.`
         );
 
         if (values.pickupStatus === 'YES') {
@@ -1181,6 +1231,74 @@ export default function App() {
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `purchase_orders/${poId}`);
       }
+    }
+  };
+
+  // Payment Tracker: Update PO Payment, record installments/transactions, and update payment status
+  const handleUpdatePayment = async (
+    poId: string,
+    updates: {
+      totalAmount?: number;
+      paidAmount: number;
+      paymentStatus: PaymentStatus;
+      paymentNotes?: string;
+      newTransaction?: Omit<PaymentTransaction, 'id' | 'createdAt'>;
+    }
+  ) => {
+    if (!firebaseUser || !employeeProfile) return;
+    const poRef = doc(db, 'purchase_orders', poId);
+    const targetPo = purchaseOrders.find((p) => p.id === poId);
+    if (!targetPo) return;
+
+    try {
+      const historyList = Array.isArray(targetPo.paymentHistory)
+        ? [...targetPo.paymentHistory]
+        : [];
+
+      if (updates.newTransaction) {
+        historyList.push({
+          id: generateSafeId('tx'),
+          amount: updates.newTransaction.amount,
+          date: updates.newTransaction.date,
+          paymentMethod: updates.newTransaction.paymentMethod,
+          referenceNo: updates.newTransaction.referenceNo || '',
+          notes: updates.newTransaction.notes || '',
+          recordedByUid: firebaseUser.uid,
+          recordedByName: `${employeeProfile.employeeName} (${employeeProfile.employeeId})`,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      const patch: any = {
+        paidAmount: updates.paidAmount,
+        paymentStatus: updates.paymentStatus,
+        paymentHistory: historyList,
+        lastPaymentDate: updates.newTransaction?.date || new Date().toISOString().slice(0, 10),
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      };
+
+      if (typeof updates.totalAmount === 'number') {
+        patch.totalAmount = updates.totalAmount;
+      }
+      if (typeof updates.paymentNotes === 'string') {
+        patch.paymentNotes = updates.paymentNotes;
+      }
+
+      await updateDoc(poRef, patch);
+
+      await recordActivity(
+        `Recorded PO Payment (${updates.paymentStatus}): ₹${updates.paidAmount.toLocaleString('en-IN')}`,
+        'PAYMENT_TRACKER',
+        targetPo.poNumber,
+        `${employeeProfile.employeeName} updated payment status to ${updates.paymentStatus} (Total Paid: ₹${updates.paidAmount.toLocaleString('en-IN')}${
+          updates.newTransaction ? `, Added: ₹${updates.newTransaction.amount.toLocaleString('en-IN')}` : ''
+        }) for PO ${targetPo.poNumber}.`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${poId}`);
     }
   };
 
@@ -2012,6 +2130,11 @@ export default function App() {
       shortLabel: `PO Entry (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length})`,
     },
     {
+      id: 'PAYMENTS',
+      label: `PO Payments (${paymentLedgerMetrics.overdueCount > 0 ? `🚨 ${paymentLedgerMetrics.overdueCount} Overdue` : `${purchaseOrders.length}`})`,
+      shortLabel: `Payments (${paymentLedgerMetrics.overdueCount > 0 ? `🚨${paymentLedgerMetrics.overdueCount}` : `${purchaseOrders.length}`})`,
+    },
+    {
       id: 'LOGISTICS',
       label: `Logistics & Delivery (${purchaseOrders.length})`,
       shortLabel: `Logistics (${purchaseOrders.length})`,
@@ -2541,6 +2664,40 @@ export default function App() {
           </div>
         )}
 
+        {/* High-Visibility Payment Overdue Banner (> 30 Days) */}
+        {paymentOverdueNotifications.length > 0 && (
+          <div className="p-3 sm:p-4 rounded-xl border border-red-500/40 bg-red-500/10 text-red-900 dark:text-red-200 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-red-600 text-white shrink-0 mt-0.5 animate-pulse">
+                <CreditCard className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-extrabold text-[11px] uppercase px-2 py-0.5 rounded bg-red-600 text-white">
+                    PAYMENT OVERDUE NOTIFICATION (&gt;30 DAYS)
+                  </span>
+                  <span className="text-xs font-bold font-mono">
+                    {paymentOverdueNotifications.length} PO(s) Exceeded 30-Day Term · Total Overdue: {formatINR(paymentLedgerMetrics.totalOverdueAmount)}
+                  </span>
+                </div>
+                <p className="text-xs text-red-800/90 dark:text-red-200/90 mt-1">
+                  Purchase Orders have pending unpaid or partial liabilities older than 30 days. Please record partition or full clearance in the Payment Tracker.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveTab('PAYMENTS')}
+                className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+              >
+                <span>Track &amp; Pay Overdue POs</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Action & Export Toolbar */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           {/* Search Input */}
@@ -2918,6 +3075,24 @@ export default function App() {
                 </button>
               </>
             )}
+
+            {activeTab === 'PAYMENTS' && (
+              <>
+                {canUserEditPo && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingPo(null);
+                      setIsPoModalOpen(true);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ New PO Entry (With Amount)</span>
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
 
@@ -2927,6 +3102,22 @@ export default function App() {
             purchaseOrders={purchaseOrders}
             dnRecords={dnRecords}
             darkMode={darkMode}
+            onNavigateToPayments={() => setActiveTab('PAYMENTS')}
+          />
+        )}
+
+        {/* TAB: PO PAYMENTS & OVERDUE TRACKER */}
+        {activeTab === 'PAYMENTS' && (
+          <PaymentTrackerTab
+            purchaseOrders={purchaseOrders}
+            onUpdatePayment={handleUpdatePayment}
+            onEditPo={(po) => {
+              setEditingPo(po);
+              setIsPoModalOpen(true);
+            }}
+            darkMode={darkMode}
+            isGrey={isGrey}
+            userRole={employeeProfile.role}
           />
         )}
 
@@ -5053,6 +5244,10 @@ export default function App() {
         onClose={() => setIsNotificationOpen(false)}
         notifications={visibleNotifications}
         onSelectPo={handleSelectPoFromNotification}
+        onOpenPaymentPo={(poNumber) => {
+          setActiveTab('PAYMENTS');
+          setSearchQuery(poNumber);
+        }}
         onDismissNotification={handleDismissNotification}
         onDismissAll={handleDismissAllNotifications}
         darkMode={darkMode}

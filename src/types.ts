@@ -86,6 +86,14 @@ export interface PurchaseOrder {
   rtoReceivedAtWh?: 'YES' | 'NO';
   rtoReason?: string;
   rtoRemarks?: string;
+  // Financials & Payment Tracking Fields
+  totalAmount?: number;
+  paidAmount?: number;
+  paymentStatus?: PaymentStatus;
+  paymentDueDate?: string;
+  paymentHistory?: PaymentTransaction[];
+  paymentNotes?: string;
+  lastPaymentDate?: string;
   orgScope: 'instamart_ops';
   createdByUid: string;
   createdByName: string;
@@ -95,6 +103,20 @@ export interface PurchaseOrder {
   updatedByEmpId: string;
   createdAt?: Timestamp | Date | string;
   updatedAt?: Timestamp | Date | string;
+}
+
+export type PaymentStatus = 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE' | 'CANCELLED';
+
+export interface PaymentTransaction {
+  id: string;
+  amount: number;
+  date: string;
+  paymentMethod: 'BANK_TRANSFER' | 'CHEQUE' | 'UPI' | 'NEFT_RTGS' | 'CASH' | 'OTHER';
+  referenceNo?: string;
+  notes?: string;
+  recordedByUid?: string;
+  recordedByName?: string;
+  createdAt?: Timestamp | Date | string;
 }
 
 export interface DnRecord {
@@ -148,7 +170,8 @@ export interface ActivityLog {
     | 'PRINT_TEAM'
     | 'POC_DIRECTORY'
     | 'ADMIN_IAM'
-    | 'SHEETS_SYNC';
+    | 'SHEETS_SYNC'
+    | 'PAYMENT_TRACKER';
   referenceNo: string;
   details: string;
   employeeUid: string;
@@ -162,6 +185,7 @@ export interface ActivityLog {
 export type ActiveTab =
   | 'DASHBOARD'
   | 'PO_ENTRY'
+  | 'PAYMENTS'
   | 'LOGISTICS'
   | 'PRINT_TEAM'
   | 'IN_TRANSIT'
@@ -176,7 +200,9 @@ export type NotificationType =
   | 'EXPIRING_TODAY'
   | 'EXPIRING_SOON'
   | 'APPOINTMENT_TODAY'
-  | 'APPOINTMENT_TOMORROW';
+  | 'APPOINTMENT_TOMORROW'
+  | 'PAYMENT_OVERDUE'
+  | 'PAYMENT_PARTIAL_DUE';
 
 export interface AppNotification {
   id: string;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Truck, AlertCircle, Sparkles, Plus, Trash2 } from 'lucide-react';
+import { X, Save, Truck, AlertCircle, Sparkles, Plus, Trash2, CreditCard } from 'lucide-react';
 import {
   PurchaseOrder,
   TeamRole,
@@ -35,6 +35,11 @@ export interface PoFormValues {
   clearBagNo: string;
   comment: string;
   pickupStatus: 'YES' | 'NO';
+  totalAmount?: number;
+  paidAmount?: number;
+  paymentStatus?: 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE' | 'CANCELLED';
+  paymentDueDate?: string;
+  paymentNotes?: string;
 }
 
 interface PoFormModalProps {
@@ -72,6 +77,11 @@ const DEFAULT_VALUES: PoFormValues = {
   clearBagNo: '',
   comment: '',
   pickupStatus: 'NO',
+  totalAmount: 0,
+  paidAmount: 0,
+  paymentStatus: 'PENDING',
+  paymentDueDate: '',
+  paymentNotes: '',
 };
 
 export const PoFormModal: React.FC<PoFormModalProps> = ({
@@ -156,11 +166,20 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
         clearBagNo: initialPo.clearBagNo,
         comment: initialPo.comment,
         pickupStatus: initialPo.pickupStatus,
+        totalAmount: typeof initialPo.totalAmount === 'number' ? initialPo.totalAmount : undefined,
+        paidAmount: initialPo.paidAmount || 0,
+        paymentStatus: initialPo.paymentStatus || 'PENDING',
+        paymentDueDate: initialPo.paymentDueDate || '',
+        paymentNotes: initialPo.paymentNotes || '',
       });
     } else {
+      const today = new Date().toISOString().slice(0, 10);
+      const defaultDue = new Date();
+      defaultDue.setDate(defaultDue.getDate() + 30);
       setValues({
         ...DEFAULT_VALUES,
-        orderDate: new Date().toISOString().slice(0, 10),
+        orderDate: today,
+        paymentDueDate: defaultDue.toISOString().slice(0, 10),
         lineItems: [{ itemId: '', itemName: '', qty: 1 }],
       });
     }
@@ -565,6 +584,141 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* PO Billing & Financial Tracking Card */}
+          <div
+            className={`p-4 rounded-xl border ${
+              darkMode ? 'bg-slate-900/80 border-slate-800' : 'bg-orange-50/50 border-orange-200/80'
+            } space-y-3.5`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5 dark:border-slate-800 border-orange-200/60">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-orange-500/20 text-orange-600 dark:text-orange-400">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+                    PO Billing & Payment Tracking (পেমেন্ট ট্র্যাকার)
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Set PO invoice amount & payment terms · Auto-tracks overdue if unpaid after 30 days
+                  </p>
+                </div>
+              </div>
+
+              {/* Quick Auto-Estimate Button */}
+              <div className="flex items-center gap-1.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const est = (values.totalQty || 1) * 350;
+                    handleChange('totalAmount', est);
+                  }}
+                  className="px-2 py-1 rounded border border-orange-500/30 bg-orange-500/10 text-orange-600 dark:text-orange-400 text-[11px] font-semibold hover:bg-orange-500/20 cursor-pointer"
+                >
+                  ⚡ Auto-Estimate (Qty × ₹350)
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Total PO Amount (₹) */}
+              <div>
+                <label className={labelClass}>Total PO Amount (₹) *</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">₹</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={values.totalAmount !== undefined && values.totalAmount !== null ? values.totalAmount : ''}
+                    onChange={(e) => handleChange('totalAmount', e.target.value === '' ? 0 : Number(e.target.value))}
+                    placeholder="e.g. 75000"
+                    className={`${inputClass} pl-7 font-mono font-bold text-emerald-600 dark:text-emerald-400`}
+                  />
+                </div>
+              </div>
+
+              {/* Payment Status */}
+              <div>
+                <label className={labelClass}>Payment Status</label>
+                <select
+                  value={values.paymentStatus || 'PENDING'}
+                  onChange={(e) => {
+                    const st = e.target.value as 'PENDING' | 'PARTIAL' | 'PAID' | 'CANCELLED';
+                    handleChange('paymentStatus', st);
+                    if (st === 'PAID' && values.totalAmount) {
+                      handleChange('paidAmount', values.totalAmount);
+                    }
+                  }}
+                  className={`${inputClass} font-semibold`}
+                >
+                  <option value="PENDING">Pending (Unpaid)</option>
+                  <option value="PARTIAL">Partial Paid (Partition Pay)</option>
+                  <option value="PAID">Fully Paid</option>
+                  <option value="CANCELLED">Cancelled</option>
+                </select>
+              </div>
+
+              {/* Paid Amount (₹) */}
+              <div>
+                <label className={labelClass}>Paid Amount (₹)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">₹</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={values.paidAmount ?? 0}
+                    onChange={(e) => {
+                      const paid = Number(e.target.value) || 0;
+                      handleChange('paidAmount', paid);
+                      if (values.totalAmount && paid >= values.totalAmount && values.totalAmount > 0) {
+                        handleChange('paymentStatus', 'PAID');
+                      } else if (paid > 0) {
+                        handleChange('paymentStatus', 'PARTIAL');
+                      }
+                    }}
+                    placeholder="0"
+                    className={`${inputClass} pl-7 font-mono`}
+                  />
+                </div>
+              </div>
+
+              {/* Payment Due Date */}
+              <div>
+                <label className={labelClass}>Payment Due Date (30-Day Term)</label>
+                <input
+                  type="date"
+                  value={values.paymentDueDate || ''}
+                  onChange={(e) => handleChange('paymentDueDate', e.target.value)}
+                  className={`${inputClass} font-mono`}
+                />
+              </div>
+            </div>
+
+            {/* Live Financial Breakdown Summary */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 px-3 py-2 rounded-lg bg-white/70 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-xs">
+              <div className="flex items-center gap-3">
+                <span className="text-slate-500">
+                  Total Value: <strong>₹{(values.totalAmount || 0).toLocaleString('en-IN')}</strong>
+                </span>
+                <span>·</span>
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  Paid: <strong>₹{(values.paidAmount || 0).toLocaleString('en-IN')}</strong>
+                </span>
+                <span>·</span>
+                <span className="text-red-600 dark:text-red-400">
+                  Remaining Due: <strong>₹{Math.max(0, (values.totalAmount || 0) - (values.paidAmount || 0)).toLocaleString('en-IN')}</strong>
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400">
+                {values.totalAmount && values.paidAmount
+                  ? `${Math.min(100, Math.round(((values.paidAmount || 0) / (values.totalAmount || 1)) * 100))}% Paid`
+                  : 'Awaiting Payment'}
+              </div>
             </div>
           </div>
 

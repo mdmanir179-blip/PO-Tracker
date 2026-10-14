@@ -303,6 +303,53 @@ export function computeNotifications(purchaseOrders: PurchaseOrder[]): AppNotifi
         });
       }
     }
+
+    // 3. PO Payment & Overdue (> 30 Days) / Partial Payment Tracking Check
+    const payBaseDate = parseDateOnly(po.orderDate) || parseDateOnly(po.appointmentDate) || new Date();
+    const todayNow = new Date();
+    const todayDate = new Date(todayNow.getFullYear(), todayNow.getMonth(), todayNow.getDate());
+    const payDaysElapsed = Math.max(0, Math.floor((todayDate.getTime() - payBaseDate.getTime()) / (1000 * 60 * 60 * 24)));
+    
+    const hasExplicit = typeof po.totalAmount === 'number' && po.totalAmount > 0;
+    const estVal = (po.totalQty && po.totalQty > 0 ? po.totalQty : 1) * 320;
+    const totalVal = hasExplicit ? po.totalAmount! : (po.totalAmount === 0 ? 0 : estVal);
+    const paidVal = Math.max(0, Number(po.paidAmount) || 0);
+    const dueVal = Math.max(0, totalVal - paidVal);
+    const isExplicitlyPaid = po.paymentStatus === 'PAID' || (totalVal > 0 && paidVal >= totalVal);
+
+    if (!isExplicitlyPaid && po.paymentStatus !== 'CANCELLED' && dueVal > 0) {
+      if (payDaysElapsed > 30) {
+        const overdueDays = payDaysElapsed - 30;
+        const isPartial = paidVal > 0;
+        notifications.push({
+          id: `pay_overdue_${po.id}`,
+          type: 'PAYMENT_OVERDUE',
+          severity: overdueDays > 14 ? 'critical' : 'urgent',
+          title: `💳 Payment OVERDUE: ₹${Math.round(dueVal).toLocaleString('en-IN')} (${overdueDays}d past 30 days)`,
+          message: `PO #${po.poNumber} has ${isPartial ? `partial payment (${Math.round((paidVal / (totalVal || 1)) * 100)}% paid)` : 'no payment'}! Pending Due: ₹${Math.round(dueVal).toLocaleString('en-IN')} (Total: ₹${Math.round(totalVal).toLocaleString('en-IN')}). Entered ${payDaysElapsed} days ago for ${po.warehouseName}.`,
+          poId: po.id,
+          poNumber: po.poNumber,
+          targetStage: po.workflowStage,
+          warehouseName: po.warehouseName,
+          dateStr: po.orderDate,
+          daysDiff: -overdueDays,
+        });
+      } else if (paidVal > 0 && dueVal > 0) {
+        notifications.push({
+          id: `pay_partial_${po.id}`,
+          type: 'PAYMENT_PARTIAL_DUE',
+          severity: 'info',
+          title: `💳 Partial Payment Pending: ₹${Math.round(dueVal).toLocaleString('en-IN')}`,
+          message: `PO #${po.poNumber} partition paid (₹${Math.round(paidVal).toLocaleString('en-IN')} of ₹${Math.round(totalVal).toLocaleString('en-IN')}). Remaining balance of ₹${Math.round(dueVal).toLocaleString('en-IN')} due soon.`,
+          poId: po.id,
+          poNumber: po.poNumber,
+          targetStage: po.workflowStage,
+          warehouseName: po.warehouseName,
+          dateStr: po.orderDate,
+          daysDiff: 30 - payDaysElapsed,
+        });
+      }
+    }
   }
 
   // Sort order: Critical (Expired/Expiring Today) first, then Urgent (Appointment Today), then Warning, then Info

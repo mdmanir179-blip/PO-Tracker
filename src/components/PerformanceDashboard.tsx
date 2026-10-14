@@ -13,8 +13,17 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import { FileSpreadsheet, FileText, Download } from 'lucide-react';
+import {
+  FileSpreadsheet,
+  FileText,
+  Download,
+  CreditCard,
+  AlertTriangle,
+  ArrowRight,
+  TrendingUp,
+} from 'lucide-react';
 import { PurchaseOrder, DnRecord } from '../types';
+import { calculatePaymentDetails, computePaymentLedgerMetrics, formatINR } from '../utils/paymentUtils';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -23,6 +32,7 @@ interface PerformanceDashboardProps {
   purchaseOrders: PurchaseOrder[];
   dnRecords: DnRecord[];
   darkMode: boolean;
+  onNavigateToPayments?: () => void;
 }
 
 function parseDateSafe(dateStr?: string): number | null {
@@ -47,6 +57,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
   purchaseOrders,
   dnRecords,
   darkMode,
+  onNavigateToPayments,
 }) => {
   // 1. Total POs & Quantities by Warehouse + Average Inward Time (Hours / Days)
   const warehouseStats = useMemo(() => {
@@ -180,6 +191,70 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
       activeWarehouses: warehouseStats.length,
     };
   }, [purchaseOrders, dnRecords, warehouseStats]);
+
+  // Financial & Payment Tracking Analytics
+  const paymentMetrics = useMemo(() => computePaymentLedgerMetrics(purchaseOrders), [purchaseOrders]);
+
+  const paymentWarehouseStats = useMemo(() => {
+    const map = new Map<
+      string,
+      { warehouse: string; billed: number; paid: number; pending: number; overdue: number }
+    >();
+    purchaseOrders.forEach((po) => {
+      const wh = po.warehouseName?.trim() || 'Unassigned Hub';
+      const cur = map.get(wh) || { warehouse: wh, billed: 0, paid: 0, pending: 0, overdue: 0 };
+      const details = calculatePaymentDetails(po);
+      cur.billed += details.totalAmount;
+      cur.paid += details.paidAmount;
+      if (details.isOverdue) {
+        cur.overdue += details.dueAmount;
+      } else {
+        cur.pending += details.dueAmount;
+      }
+      map.set(wh, cur);
+    });
+    return Array.from(map.values())
+      .map((item) => ({
+        ...item,
+        billedFormatted: formatINR(item.billed),
+        paidFormatted: formatINR(item.paid),
+        overdueFormatted: formatINR(item.overdue),
+      }))
+      .sort((a, b) => b.billed - a.billed)
+      .slice(0, 8);
+  }, [purchaseOrders]);
+
+  const paymentAgingStats = useMemo(() => {
+    let currentTerm = 0; // <= 15 days
+    let approachingTerm = 0; // 16 - 30 days
+    let overdue1 = 0; // 31 - 45 days (overdue 1-15d)
+    let overdue2 = 0; // 46+ days (critical overdue)
+
+    purchaseOrders.forEach((po) => {
+      const details = calculatePaymentDetails(po);
+      if (details.dueAmount > 0) {
+        if (details.daysElapsed <= 15) currentTerm += details.dueAmount;
+        else if (details.daysElapsed <= 30) approachingTerm += details.dueAmount;
+        else if (details.daysElapsed <= 45) overdue1 += details.dueAmount;
+        else overdue2 += details.dueAmount;
+      }
+    });
+
+    return [
+      { bucket: '0-15d (Current Term)', amount: currentTerm, display: formatINR(currentTerm), color: '#3b82f6' },
+      { bucket: '16-30d (Approaching Due)', amount: approachingTerm, display: formatINR(approachingTerm), color: '#f59e0b' },
+      { bucket: '31-45d (Overdue 1-15d)', amount: overdue1, display: formatINR(overdue1), color: '#ea580c' },
+      { bucket: '46+d (Critical Overdue)', amount: overdue2, display: formatINR(overdue2), color: '#dc2626' },
+    ];
+  }, [purchaseOrders]);
+
+  const urgentOverduePos = useMemo(() => {
+    return purchaseOrders
+      .map((po) => ({ po, details: calculatePaymentDetails(po) }))
+      .filter((item) => item.details.isOverdue)
+      .sort((a, b) => b.details.overdueDays - a.details.overdueDays)
+      .slice(0, 5);
+  }, [purchaseOrders]);
 
   // Export Dashboard Insights to Excel
   const handleExportDashboardExcel = () => {
@@ -620,6 +695,279 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
                 />
               </ComposedChart>
             </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 2: PO Financials & Payment Action Center */}
+      <div
+        className={`p-5 rounded-2xl border ${
+          darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+        } space-y-6`}
+      >
+        {/* Section Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4 dark:border-slate-800 border-slate-200">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-orange-500/15 text-orange-600 dark:text-orange-400">
+              <CreditCard className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  04. PO Financials & Payment Action Analytics (পেমেন্ট অ্যাকশন ও চার্ট)
+                </h3>
+                {paymentMetrics.overdueCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold bg-red-600 text-white animate-pulse">
+                    {paymentMetrics.overdueCount} Overdue
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Warehouse financial breakdown · 30-Day overdue liability analysis · Immediate payment action pipeline
+              </p>
+            </div>
+          </div>
+
+          {onNavigateToPayments && (
+            <button
+              type="button"
+              onClick={onNavigateToPayments}
+              className="px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer transition-colors self-start sm:self-auto"
+            >
+              <span>Manage in Payment Tracker</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Financial KPI Strip */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50">
+            <div className="text-xs text-slate-500 font-medium">Total Invoiced Volume</div>
+            <div className="text-xl sm:text-2xl font-bold font-mono text-slate-900 dark:text-white mt-1">
+              {formatINR(paymentMetrics.totalBilled)}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">Across {purchaseOrders.length} POs</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10">
+            <div className="text-xs text-emerald-700 dark:text-emerald-300 font-medium">Total Paid / Cleared</div>
+            <div className="text-xl sm:text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1">
+              {formatINR(paymentMetrics.totalCollected)}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              {paymentMetrics.collectionRate}% Cleared · {paymentMetrics.fullyPaidCount} Settled
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-500/10">
+            <div className="text-xs text-amber-700 dark:text-amber-300 font-medium">Pending Term Balance</div>
+            <div className="text-xl sm:text-2xl font-bold font-mono text-amber-600 dark:text-amber-400 mt-1">
+              {formatINR(paymentMetrics.totalOutstanding - paymentMetrics.totalOverdueAmount)}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">Within 30-Day Normal Term</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl border border-red-500/40 bg-red-500/10">
+            <div className="text-xs text-red-700 dark:text-red-300 font-bold flex items-center gap-1">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Overdue (&gt;30 Days)</span>
+            </div>
+            <div className="text-xl sm:text-2xl font-bold font-mono text-red-600 dark:text-red-400 mt-1">
+              {formatINR(paymentMetrics.totalOverdueAmount)}
+            </div>
+            <div className="text-[11px] text-red-500 font-medium mt-0.5">
+              {paymentMetrics.overdueCount} POs Exceeded 30 Days
+            </div>
+          </div>
+        </div>
+
+        {/* Payment Action Charts Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Chart A: Warehouse Financials (Paid vs Pending vs Overdue) */}
+          <div
+            className={`p-4 rounded-xl border ${
+              darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}
+          >
+            <div className="mb-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+                Payment Distribution by Warehouse (Paid vs Due vs Overdue)
+              </h4>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Stacked monetary distribution in ₹ across active warehouse destinations
+              </p>
+            </div>
+
+            {paymentWarehouseStats.length === 0 ? (
+              <div className="h-64 flex items-center justify-center text-xs text-slate-400">
+                No PO records to visualize.
+              </div>
+            ) : (
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={paymentWarehouseStats}
+                    margin={{ top: 10, right: 16, left: 10, bottom: 25 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                    <XAxis
+                      dataKey="warehouse"
+                      tick={{ fill: axisText, fontSize: 10 }}
+                      interval={0}
+                      angle={-15}
+                      textAnchor="end"
+                    />
+                    <YAxis
+                      tick={{ fill: axisText, fontSize: 10 }}
+                      tickFormatter={(val) => `₹${Math.round(val / 1000)}k`}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: tooltipBg,
+                        borderColor: tooltipBorder,
+                        fontSize: '11px',
+                        borderRadius: '8px',
+                      }}
+                      formatter={(val: any) => [formatINR(Number(val) || 0), '']}
+                    />
+                    <Legend wrapperStyle={{ fontSize: '11px' }} />
+                    <Bar dataKey="paid" name="Paid Amount" stackId="a" fill="#16a34a" />
+                    <Bar dataKey="pending" name="Within Term Due" stackId="a" fill="#f59e0b" />
+                    <Bar dataKey="overdue" name="Overdue (>30d)" stackId="a" fill="#dc2626" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* Chart B: Payment Aging & Risk Analysis */}
+          <div
+            className={`p-4 rounded-xl border ${
+              darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}
+          >
+            <div className="mb-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+                Payment Aging Buckets &amp; Overdue Risk Breakdown
+              </h4>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Outstanding balance aging across standard 30-day terms and overdue horizons
+              </p>
+            </div>
+
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={paymentAgingStats}
+                  margin={{ top: 10, right: 16, left: 10, bottom: 25 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                  <XAxis
+                    dataKey="bucket"
+                    tick={{ fill: axisText, fontSize: 10 }}
+                  />
+                  <YAxis
+                    tick={{ fill: axisText, fontSize: 10 }}
+                    tickFormatter={(val) => `₹${Math.round(val / 1000)}k`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: tooltipBg,
+                      borderColor: tooltipBorder,
+                      fontSize: '11px',
+                      borderRadius: '8px',
+                    }}
+                    formatter={(val: any) => [formatINR(Number(val) || 0), 'Due Amount']}
+                  />
+                  <Bar
+                    dataKey="amount"
+                    name="Outstanding Liability"
+                    fill="#ea580c"
+                    radius={[6, 6, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        {/* Action Table: Urgent Overdue POs List */}
+        {urgentOverduePos.length > 0 && (
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-extrabold uppercase tracking-wider text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4" />
+                <span>Urgent Action Required: Top Overdue POs (&gt;30 Days Unpaid)</span>
+              </h4>
+              {onNavigateToPayments && (
+                <button
+                  type="button"
+                  onClick={onNavigateToPayments}
+                  className="text-xs text-orange-600 dark:text-orange-400 hover:underline font-semibold cursor-pointer"
+                >
+                  View All Overdue POs ({paymentMetrics.overdueCount}) &rarr;
+                </button>
+              )}
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-red-500/30">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-red-500/10 text-red-700 dark:text-red-300 border-b border-red-500/20 font-bold">
+                    <th className="py-2.5 px-3">PO Number</th>
+                    <th className="py-2.5 px-3">Order Date</th>
+                    <th className="py-2.5 px-3">Warehouse</th>
+                    <th className="py-2.5 px-3">Total Value</th>
+                    <th className="py-2.5 px-3">Paid Amount</th>
+                    <th className="py-2.5 px-3">Overdue Liability</th>
+                    <th className="py-2.5 px-3">Overdue Days</th>
+                    <th className="py-2.5 px-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-red-500/10 font-sans">
+                  {urgentOverduePos.map(({ po, details }) => (
+                    <tr
+                      key={po.id}
+                      className="hover:bg-red-500/5 transition-colors"
+                    >
+                      <td className="py-2.5 px-3 font-mono font-bold text-red-600 dark:text-red-400">
+                        {po.poNumber}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-slate-500">
+                        {po.orderDate}
+                      </td>
+                      <td className="py-2.5 px-3 font-medium text-slate-800 dark:text-slate-200">
+                        {po.warehouseName}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-semibold">
+                        {formatINR(details.totalAmount)}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-emerald-600">
+                        {formatINR(details.paidAmount)}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-extrabold text-red-600 dark:text-red-400">
+                        {formatINR(details.dueAmount)}
+                      </td>
+                      <td className="py-2.5 px-3 font-bold text-red-600 dark:text-red-400">
+                        {details.overdueDays} days overdue
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        {onNavigateToPayments && (
+                          <button
+                            type="button"
+                            onClick={onNavigateToPayments}
+                            className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold cursor-pointer transition-colors"
+                          >
+                            Pay / Clear
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>

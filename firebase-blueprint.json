@@ -298,6 +298,35 @@
           "maxLength": 500,
           "description": "Additional RTO remarks, vehicle number, or resolution notes"
         },
+        "totalAmount": {
+          "type": "number",
+          "description": "Total PO Invoiced / Billing Amount in INR"
+        },
+        "paidAmount": {
+          "type": "number",
+          "description": "Total Amount Paid / Cleared in INR"
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["PENDING", "PARTIAL", "PAID", "OVERDUE", "CANCELLED"],
+          "maxLength": 20,
+          "description": "Payment status of the Purchase Order"
+        },
+        "paymentDueDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Payment Due Date (Standard 30 Days Term)"
+        },
+        "paymentNotes": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Financial and payment remarks"
+        },
+        "lastPaymentDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Date of the most recent payment installment"
+        },
         "orgScope": {
           "type": "string",
           "enum": ["instamart_ops"],

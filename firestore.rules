@@ -80,6 +80,8 @@ service cloud.firestore {
           'grnDnSummary', 'hasDn',
           'isRto', 'rtoPickedStatus', 'rtoTrackingId', 'rtoCourierPartner',
           'rtoPickDate', 'rtoReceivedAtWh', 'rtoReason', 'rtoRemarks',
+          'totalAmount', 'paidAmount', 'paymentStatus', 'paymentDueDate',
+          'paymentHistory', 'paymentNotes', 'lastPaymentDate',
           'orgScope',
           'createdByUid', 'createdByName', 'createdByEmpId',
           'updatedByUid', 'updatedByName', 'updatedByEmpId',
@@ -176,7 +178,7 @@ service cloud.firestore {
           'orgScope', 'createdAt'
         ]) &&
         data.action is string && data.action.size() >= 1 && data.action.size() <= 120 &&
-        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'RTO_TRACKER', 'GRN', 'DN_TRACKER', 'LOGISTICS', 'PRINT_TEAM', 'POC_DIRECTORY', 'ADMIN_IAM', 'SHEETS_SYNC'] &&
+        data.module is string && data.module.size() <= 30 && data.module in ['PO_ENTRY', 'IN_TRANSIT', 'RTO_TRACKER', 'GRN', 'DN_TRACKER', 'LOGISTICS', 'PRINT_TEAM', 'POC_DIRECTORY', 'ADMIN_IAM', 'SHEETS_SYNC', 'PAYMENT_TRACKER'] &&
         data.referenceNo is string && data.referenceNo.size() <= 100 &&
         data.details is string && data.details.size() <= 400 &&
         data.employeeUid is string && data.employeeUid.size() <= 128 && data.employeeUid.matches('^[a-zA-Z0-9_\\-]+$') &&
