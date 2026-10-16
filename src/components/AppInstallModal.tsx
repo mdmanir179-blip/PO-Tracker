@@ -83,7 +83,7 @@ export const AppInstallModal: React.FC<AppInstallModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base sm:text-lg font-bold">
-                  Install Instamart OpsHub App
+                  Install Instamart POsHub Enterprise App
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-600 dark:text-orange-400">
                   PWA Software
@@ -111,7 +111,7 @@ export const AppInstallModal: React.FC<AppInstallModalProps> = ({
               <div>
                 <div className="font-bold text-sm">App Already Installed!</div>
                 <div className="text-xs opacity-90">
-                  You are running Instamart OpsHub as an installed standalone application on {platformName}.
+                  You are running Instamart POsHub Enterprise as an installed standalone application on {platformName}.
                 </div>
               </div>
             </div>
@@ -228,10 +228,10 @@ export const AppInstallModal: React.FC<AppInstallModalProps> = ({
                       Look at the right side of the top browser URL address bar: you will see an <strong>Install icon</strong> (an icon shaped like a screen with a down-arrow).
                     </li>
                     <li>
-                      Click <strong>"Install Instamart OpsHub"</strong> or select <strong>Menu (⋮) → Cast, save and share → Install page as app</strong>.
+                      Click <strong>"Install Instamart POsHub Enterprise"</strong> or select <strong>Menu (⋮) → Cast, save and share → Install page as app</strong>.
                     </li>
                     <li>
-                      Instamart OpsHub will open in its own separate, borderless desktop window and place an icon on your <strong>Desktop & Taskbar / Mac Dock</strong>.
+                      Instamart POsHub Enterprise will open in its own separate, borderless desktop window and place an icon on your <strong>Desktop & Taskbar / Mac Dock</strong>.
                     </li>
                   </ol>
                 </div>

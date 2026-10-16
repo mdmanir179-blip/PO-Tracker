@@ -20,8 +20,8 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: '/',
-          name: 'Instamart OpsHub — PO, In-Transit, RTO, GRN & DN Tracker',
-          short_name: 'InstamartOps',
+          name: 'Instamart POsHub Enterprise — PO, In-Transit, RTO, GRN & DN Tracker',
+          short_name: 'InstamartPOs',
           description:
             'Enterprise Instamart Purchase Order, In-Transit, RTO Management, GRN, and Discrepancy Note (DN) Control System.',
           theme_color: '#ea580c',

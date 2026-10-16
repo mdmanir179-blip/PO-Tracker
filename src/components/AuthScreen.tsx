@@ -297,7 +297,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
             </div>
             <div className="space-y-2">
               <div className="text-xs font-semibold uppercase tracking-widest text-orange-400">
-                Instamart OpsHub Enterprise
+                Instamart POsHub Enterprise
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight leading-snug text-white max-w-sm mx-auto">
                 Unified PO, In-Transit, RTO, GRN & Discrepancy Note Control

@@ -61,7 +61,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       </div>
       <div className="flex flex-col leading-tight">
         <span className={`${titleSize} font-bold tracking-tight whitespace-nowrap`}>
-          Instamart <span className="text-orange-600 dark:text-orange-400">OpsHub</span>
+          Instamart <span className="text-orange-600 dark:text-orange-400">POsHub Enterprise</span>
         </span>
         {showSubtitle && (
           <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">
