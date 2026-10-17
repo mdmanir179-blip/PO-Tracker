@@ -12,10 +12,10 @@ import {
   doc,
   getDocFromServer,
 } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import activeFirebaseConfig from './firebaseConfig';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const app = initializeApp(activeFirebaseConfig);
+export const db = getFirestore(app, activeFirebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
 export interface AppUser {
