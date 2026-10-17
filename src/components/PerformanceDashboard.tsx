@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   BarChart,
   Bar,
@@ -21,6 +21,9 @@ import {
   AlertTriangle,
   ArrowRight,
   TrendingUp,
+  Calendar,
+  Layers,
+  Package,
 } from 'lucide-react';
 import { PurchaseOrder, DnRecord } from '../types';
 import { calculatePaymentDetails, computePaymentLedgerMetrics, formatINR } from '../utils/paymentUtils';
@@ -53,12 +56,33 @@ function parseTimestampSafe(ts: any): number | null {
   return null;
 }
 
+function formatDateLabel(dateStr?: string): string {
+  if (!dateStr || dateStr === 'Undated') return 'Undated';
+  try {
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return dateStr;
+}
+
 export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
   purchaseOrders,
   dnRecords,
   darkMode,
   onNavigateToPayments,
 }) => {
+  const [poTrendMetric, setPoTrendMetric] = useState<'stages' | 'qty' | 'value'>('stages');
+
   // 1. Total POs & Quantities by Warehouse + Average Inward Time (Hours / Days)
   const warehouseStats = useMemo(() => {
     const map = new Map<
@@ -152,6 +176,56 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
 
     return Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
   }, [dnRecords]);
+
+  // Date-wise POs Trends Over Time (Grouped by PO Order Date)
+  const dateWisePoTrends = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        date: string;
+        rawDate: string;
+        totalPos: number;
+        poEntryCount: number;
+        inTransitCount: number;
+        grnCount: number;
+        totalQty: number;
+        totalValue: number;
+      }
+    >();
+
+    purchaseOrders.forEach((po) => {
+      let d = po.orderDate?.trim();
+      if (!d && po.createdAt) {
+        const ms = parseTimestampSafe(po.createdAt);
+        if (ms) d = new Date(ms).toISOString().slice(0, 10);
+      }
+      if (!d) d = po.shipDate?.trim() || 'Undated';
+
+      const existing = map.get(d) || {
+        date: formatDateLabel(d),
+        rawDate: d,
+        totalPos: 0,
+        poEntryCount: 0,
+        inTransitCount: 0,
+        grnCount: 0,
+        totalQty: 0,
+        totalValue: 0,
+      };
+
+      existing.totalPos += 1;
+      existing.totalQty += Number(po.totalQty) || 0;
+      const details = calculatePaymentDetails(po);
+      existing.totalValue += details.totalAmount;
+
+      if (po.workflowStage === 'PO_ENTRY') existing.poEntryCount += 1;
+      else if (po.workflowStage === 'IN_TRANSIT') existing.inTransitCount += 1;
+      else if (po.workflowStage === 'GRN') existing.grnCount += 1;
+
+      map.set(d, existing);
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.rawDate.localeCompare(b.rawDate));
+  }, [purchaseOrders]);
 
   // 3. Overall KPI calculations
   const overallMetrics = useMemo(() => {
@@ -274,10 +348,26 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
       'Total DN Quantity': d.dnQty,
     }));
 
+    const poTrendRows = dateWisePoTrends.map((d) => ({
+      'Order Date': d.rawDate,
+      'Formatted Date': d.date,
+      'Total POs': d.totalPos,
+      'PO Entry Count': d.poEntryCount,
+      'In Transit Count': d.inTransitCount,
+      'Completed GRN Count': d.grnCount,
+      'Total Ordered Units': d.totalQty,
+      'Total Value (INR)': d.totalValue,
+    }));
+
     XLSX.utils.book_append_sheet(
       wb,
       XLSX.utils.json_to_sheet(whRows),
       'Warehouse Performance'
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(poTrendRows),
+      'Date-wise PO Trends'
     );
     XLSX.utils.book_append_sheet(
       wb,
@@ -374,7 +464,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
             Executive Performance Dashboard & Supply Chain Analytics
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Real-time operational insights across Total POs by Warehouse, DN Quantity trends over time, and Average Inward Turnaround Time.
+            Real-time operational insights across Total POs by Warehouse, Date-wise PO trends over time, and Average Inward Turnaround Time.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -546,68 +636,226 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
           )}
         </div>
 
-        {/* Chart 2: DN Quantity Trends Over Time */}
+        {/* Chart 2: Date-wise POs Trends Over Time */}
         <div
-          className={`p-5 rounded-xl border ${
+          className={`p-5 rounded-xl border flex flex-col justify-between ${
             darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
           }`}
         >
-          <div className="mb-4">
-            <h3 className="text-sm font-bold">02. DN Quantity Trends Over Time</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Daily Discrepancy Note (DN) quantity and incident volume logged by Warehouse & Backoffice teams
-            </p>
+          <div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-orange-500" />
+                    <span>02. Date-wise POs Trends Over Time</span>
+                  </h3>
+                  {dateWisePoTrends.length > 0 && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                      {dateWisePoTrends.length} Active Dates
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Daily Purchase Order progression across PO Entry, In Transit, GRN Inwarded, and units volume
+                </p>
+              </div>
+
+              {/* View / Metric Toggles */}
+              <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg text-xs font-semibold self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setPoTrendMetric('stages')}
+                  className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                    poTrendMetric === 'stages'
+                      ? 'bg-white dark:bg-slate-900 text-orange-600 dark:text-orange-400 shadow-xs'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Stages
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoTrendMetric('qty')}
+                  className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                    poTrendMetric === 'qty'
+                      ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Units
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoTrendMetric('value')}
+                  className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                    poTrendMetric === 'value'
+                      ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Value (₹)
+                </button>
+              </div>
+            </div>
+
+            {dateWisePoTrends.length === 0 ? (
+              <div className="h-72 flex items-center justify-center text-xs text-slate-500">
+                Add Purchase Orders in the PO Entry tab to view date-wise PO trends.
+              </div>
+            ) : (
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  {poTrendMetric === 'stages' ? (
+                    <AreaChart
+                      data={dateWisePoTrends}
+                      margin={{ top: 10, right: 16, left: 0, bottom: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: axisText, fontSize: 11 }}
+                      />
+                      <YAxis
+                        allowDecimals={false}
+                        tick={{ fill: axisText, fontSize: 11 }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: tooltipBg,
+                          borderColor: tooltipBorder,
+                          fontSize: '12px',
+                          borderRadius: '8px',
+                        }}
+                        labelFormatter={(label, payload) => {
+                          const raw = payload?.[0]?.payload?.rawDate;
+                          return raw ? `${label} (${raw})` : label;
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Area
+                        type="monotone"
+                        dataKey="poEntryCount"
+                        name="PO Entry"
+                        stackId="1"
+                        stroke="#ea580c"
+                        fill="#ea580c"
+                        fillOpacity={0.45}
+                        strokeWidth={2}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="inTransitCount"
+                        name="In Transit"
+                        stackId="1"
+                        stroke="#d97706"
+                        fill="#d97706"
+                        fillOpacity={0.45}
+                        strokeWidth={2}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="grnCount"
+                        name="GRN Inwarded"
+                        stackId="1"
+                        stroke="#16a34a"
+                        fill="#16a34a"
+                        fillOpacity={0.55}
+                        strokeWidth={2}
+                      />
+                    </AreaChart>
+                  ) : poTrendMetric === 'qty' ? (
+                    <AreaChart
+                      data={dateWisePoTrends}
+                      margin={{ top: 10, right: 16, left: 0, bottom: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: axisText, fontSize: 11 }}
+                      />
+                      <YAxis
+                        tick={{ fill: axisText, fontSize: 11 }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: tooltipBg,
+                          borderColor: tooltipBorder,
+                          fontSize: '12px',
+                          borderRadius: '8px',
+                        }}
+                        labelFormatter={(label, payload) => {
+                          const raw = payload?.[0]?.payload?.rawDate;
+                          return raw ? `${label} (${raw})` : label;
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Area
+                        type="monotone"
+                        dataKey="totalQty"
+                        name="Ordered Units Qty"
+                        stroke="#2563eb"
+                        fill="#3b82f6"
+                        fillOpacity={0.25}
+                        strokeWidth={2.5}
+                      />
+                    </AreaChart>
+                  ) : (
+                    <AreaChart
+                      data={dateWisePoTrends}
+                      margin={{ top: 10, right: 16, left: 0, bottom: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: axisText, fontSize: 11 }}
+                      />
+                      <YAxis
+                        tick={{ fill: axisText, fontSize: 11 }}
+                        tickFormatter={(v) => (v >= 100000 ? `₹${(v / 100000).toFixed(1)}L` : v >= 1000 ? `₹${(v / 1000).toFixed(0)}k` : `₹${v}`)}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: tooltipBg,
+                          borderColor: tooltipBorder,
+                          fontSize: '12px',
+                          borderRadius: '8px',
+                        }}
+                        formatter={(val: any) => [formatINR(Number(val) || 0), 'Order Value']}
+                        labelFormatter={(label, payload) => {
+                          const raw = payload?.[0]?.payload?.rawDate;
+                          return raw ? `${label} (${raw})` : label;
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Area
+                        type="monotone"
+                        dataKey="totalValue"
+                        name="Total Value (₹)"
+                        stroke="#059669"
+                        fill="#10b981"
+                        fillOpacity={0.25}
+                        strokeWidth={2.5}
+                      />
+                    </AreaChart>
+                  )}
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
 
-          {dnTrendData.length === 0 ? (
-            <div className="h-72 flex items-center justify-center text-xs text-slate-500">
-              Log Discrepancy Notes in the Instamart DN Tracker tab to view DN quantity trends.
-            </div>
-          ) : (
-            <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={dnTrendData}
-                  margin={{ top: 10, right: 16, left: 0, bottom: 20 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: axisText, fontSize: 11 }}
-                  />
-                  <YAxis
-                    allowDecimals={false}
-                    tick={{ fill: axisText, fontSize: 11 }}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: tooltipBg,
-                      borderColor: tooltipBorder,
-                      fontSize: '12px',
-                      borderRadius: '8px',
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: '12px' }} />
-                  <Area
-                    type="monotone"
-                    dataKey="dnQty"
-                    name="DN Quantity"
-                    stroke="#dc2626"
-                    fill="#dc2626"
-                    fillOpacity={0.2}
-                    strokeWidth={2}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="dnCount"
-                    name="DN Incidents"
-                    stroke="#ea580c"
-                    fill="#ea580c"
-                    fillOpacity={0.12}
-                    strokeWidth={2}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+          {/* Quick Footer Summary */}
+          {dateWisePoTrends.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <div className="flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+                <span>
+                  Tracking <strong className="text-slate-800 dark:text-slate-200">{purchaseOrders.length} total orders</strong> across <strong className="text-slate-800 dark:text-slate-200">{dateWisePoTrends.length} dates</strong>
+                </span>
+              </div>
+              <div className="font-mono">
+                Avg: {(purchaseOrders.length / Math.max(1, dateWisePoTrends.length)).toFixed(1)} POs/day
+              </div>
             </div>
           )}
         </div>
