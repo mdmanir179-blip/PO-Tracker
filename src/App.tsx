@@ -110,6 +110,7 @@ import {
   computeNotifications,
   getAppointmentStatus,
   getPoExpiryStatus,
+  getShipmentDateStatus,
 } from './services/notificationService';
 
 function generateSafeId(prefix: string): string {
@@ -117,7 +118,7 @@ function generateSafeId(prefix: string): string {
   return `${prefix}_${Date.now()}_${rand}`;
 }
 
-export { getPoExpiryStatus, getAppointmentStatus };
+export { getPoExpiryStatus, getAppointmentStatus, getShipmentDateStatus };
 
 export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
@@ -3207,6 +3208,7 @@ export default function App() {
                     {poEntryList.map((po) => {
                       const expiryInfo = getPoExpiryStatus(po.poExpiryDate);
                       const aptStatus = getAppointmentStatus(po.appointmentDate);
+                      const shipStatus = getShipmentDateStatus(po.shipDate);
                       return (
                         <tr
                           key={po.id}
@@ -3215,6 +3217,8 @@ export default function App() {
                               ? 'bg-red-500/10 hover:bg-red-500/15 border-l-4 border-l-red-500'
                               : aptStatus.isToday
                               ? 'bg-amber-500/10 hover:bg-amber-500/15 border-l-4 border-l-amber-500'
+                              : shipStatus.isToday
+                              ? 'bg-emerald-500/10 hover:bg-emerald-500/15 border-l-4 border-l-emerald-500'
                               : expiryInfo.isExpiringSoon
                               ? 'bg-amber-500/5 hover:bg-amber-500/10'
                               : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
@@ -3274,9 +3278,43 @@ export default function App() {
                           </td>
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
                             <div>{po.invoiceNo || '-'}</div>
-                            <div className="text-[11px] text-slate-500">
+                            <div
+                              className={`text-[11px] ${
+                                shipStatus.isToday
+                                  ? 'font-bold text-emerald-600 dark:text-emerald-400 border-b-2 border-emerald-500 pb-0.5 inline-block bg-emerald-500/10 px-1.5 py-0.5 rounded shadow-xs'
+                                  : 'text-slate-500'
+                              }`}
+                            >
                               Ship: {po.shipDate || '-'}
                             </div>
+                            {po.shipDate && (
+                              <>
+                                {shipStatus.isToday && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600 text-white font-extrabold text-[10px] animate-pulse shadow-xs">
+                                      <Truck className="w-3 h-3" />
+                                      <span>SHIPMENT TODAY!</span>
+                                    </span>
+                                  </div>
+                                )}
+                                {shipStatus.isTomorrow && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold text-[10px]">
+                                      <Truck className="w-3 h-3" />
+                                      <span>Tomorrow</span>
+                                    </span>
+                                  </div>
+                                )}
+                                {shipStatus.isPast && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[10px]">
+                                      <AlertTriangle className="w-3 h-3" />
+                                      <span>Shipment Due</span>
+                                    </span>
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </td>
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
                             <div>{po.appointmentId || '-'}</div>
@@ -3854,6 +3892,7 @@ export default function App() {
                     {inTransitList.map((po) => {
                       const expiryInfo = getPoExpiryStatus(po.poExpiryDate);
                       const aptStatus = getAppointmentStatus(po.appointmentDate);
+                      const shipStatus = getShipmentDateStatus(po.shipDate);
                       return (
                         <tr
                           key={po.id}
@@ -3862,6 +3901,8 @@ export default function App() {
                               ? 'bg-red-500/10 hover:bg-red-500/15 border-l-4 border-l-red-500'
                               : aptStatus.isToday
                               ? 'bg-amber-500/10 hover:bg-amber-500/15 border-l-4 border-l-amber-500'
+                              : shipStatus.isToday
+                              ? 'bg-emerald-500/10 hover:bg-emerald-500/15 border-l-4 border-l-emerald-500'
                               : expiryInfo.isExpiringSoon
                               ? 'bg-amber-500/5 hover:bg-amber-500/10'
                               : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
@@ -3921,9 +3962,43 @@ export default function App() {
                           </td>
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
                             <div>{po.invoiceNo || '-'}</div>
-                            <div className="text-[11px] text-slate-500">
+                            <div
+                              className={`text-[11px] ${
+                                shipStatus.isToday
+                                  ? 'font-bold text-emerald-600 dark:text-emerald-400 border-b-2 border-emerald-500 pb-0.5 inline-block bg-emerald-500/10 px-1.5 py-0.5 rounded shadow-xs'
+                                  : 'text-slate-500'
+                              }`}
+                            >
                               Ship: {po.shipDate || '-'}
                             </div>
+                            {po.shipDate && (
+                              <>
+                                {shipStatus.isToday && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-600 text-white font-extrabold text-[10px] animate-pulse shadow-xs">
+                                      <Truck className="w-3 h-3" />
+                                      <span>SHIPMENT TODAY!</span>
+                                    </span>
+                                  </div>
+                                )}
+                                {shipStatus.isTomorrow && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold text-[10px]">
+                                      <Truck className="w-3 h-3" />
+                                      <span>Tomorrow</span>
+                                    </span>
+                                  </div>
+                                )}
+                                {shipStatus.isPast && (
+                                  <div className="mt-1">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[10px]">
+                                      <AlertTriangle className="w-3 h-3" />
+                                      <span>Shipment Due</span>
+                                    </span>
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </td>
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
                             <div>{po.appointmentId || '-'}</div>

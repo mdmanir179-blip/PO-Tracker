@@ -12,6 +12,7 @@ import {
   ExternalLink,
   ChevronRight,
   CreditCard,
+  Truck,
 } from 'lucide-react';
 import { AppNotification, NotificationType, WorkflowStage } from '../types';
 
@@ -247,6 +248,8 @@ export function NotificationCenter({
               const isPayment = n.type === 'PAYMENT_OVERDUE' || n.type === 'PAYMENT_PARTIAL_DUE';
               const isExpired = n.type === 'EXPIRED' || n.type === 'EXPIRING_TODAY';
               const isTodayApt = n.type === 'APPOINTMENT_TODAY';
+              const isShipment = n.type === 'SHIPMENT_TODAY' || n.type === 'SHIPMENT_TOMORROW' || n.type === 'SHIPMENT_OVERDUE';
+              const isTodayShip = n.type === 'SHIPMENT_TODAY';
 
               return (
                 <div
@@ -258,6 +261,10 @@ export function NotificationCenter({
                       ? 'border-red-500/40 bg-red-500/10'
                       : isTodayApt
                       ? 'border-amber-500/40 bg-amber-500/10 shadow-xs'
+                      : isTodayShip
+                      ? 'border-emerald-500/50 bg-emerald-500/10 shadow-xs'
+                      : isShipment
+                      ? 'border-emerald-500/30 bg-emerald-500/5'
                       : n.severity === 'warning'
                       ? 'border-yellow-500/40 bg-yellow-500/10'
                       : darkMode
@@ -275,11 +282,17 @@ export function NotificationCenter({
                             ? 'bg-red-500 text-white'
                             : isTodayApt
                             ? 'bg-amber-500 text-white animate-pulse'
+                            : isTodayShip
+                            ? 'bg-emerald-600 text-white animate-pulse'
+                            : isShipment
+                            ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
                             : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                         }`}
                       >
                         {isPayment ? (
                           <CreditCard className="w-4 h-4" />
+                        ) : isShipment ? (
+                          <Truck className="w-4 h-4" />
                         ) : isTodayApt ? (
                           <Calendar className="w-4 h-4" />
                         ) : isExpired ? (
@@ -298,6 +311,10 @@ export function NotificationCenter({
                                 ? 'bg-red-500/20 text-red-600 dark:text-red-400'
                                 : isTodayApt
                                 ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 font-extrabold'
+                                : isTodayShip
+                                ? 'bg-emerald-600 text-white font-extrabold'
+                                : isShipment
+                                ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold'
                                 : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                             }`}
                           >

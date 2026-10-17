@@ -210,6 +210,57 @@ export function getPoExpiryStatus(poExpiryDate?: string): {
 }
 
 /**
+ * Get shipment date status compared to local today
+ */
+export function getShipmentDateStatus(shipDate?: string): {
+  isToday: boolean;
+  isTomorrow: boolean;
+  isPast: boolean;
+  isUpcoming: boolean;
+  daysDiff: number | null;
+  formattedDate: string;
+} {
+  if (!shipDate || !shipDate.trim()) {
+    return {
+      isToday: false,
+      isTomorrow: false,
+      isPast: false,
+      isUpcoming: false,
+      daysDiff: null,
+      formattedDate: '',
+    };
+  }
+
+  const sDate = parseDateOnly(shipDate);
+  if (!sDate) {
+    return {
+      isToday: false,
+      isTomorrow: false,
+      isPast: false,
+      isUpcoming: false,
+      daysDiff: null,
+      formattedDate: shipDate,
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  sDate.setHours(0, 0, 0, 0);
+
+  const diffMs = sDate.getTime() - today.getTime();
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+  return {
+    isToday: diffDays === 0,
+    isTomorrow: diffDays === 1,
+    isPast: diffDays < 0,
+    isUpcoming: diffDays > 1 && diffDays <= 3,
+    daysDiff: diffDays,
+    formattedDate: shipDate,
+  };
+}
+
+/**
  * Compute all active operations notifications across Purchase Orders
  */
 export function computeNotifications(purchaseOrders: PurchaseOrder[]): AppNotification[] {
@@ -300,6 +351,40 @@ export function computeNotifications(purchaseOrders: PurchaseOrder[]): AppNotifi
           warehouseName: po.warehouseName,
           dateStr: po.poExpiryDate,
           daysDiff: exp.daysLeft,
+        });
+      }
+    }
+
+    // 2.5. Shipment Date Check (Highlight & Alert on Shipment Day)
+    if (po.shipDate && !isGrn) {
+      const ship = getShipmentDateStatus(po.shipDate);
+      if (ship.isToday) {
+        notifications.push({
+          id: `ship_today_${po.id}`,
+          type: 'SHIPMENT_TODAY',
+          severity: 'urgent',
+          title: `🚀 Shipment is TODAY (${po.shipDate})`,
+          message: `PO #${po.poNumber} is scheduled for shipment/dispatch TODAY to ${po.warehouseName}. Total Qty: ${po.totalQty}. Invoice: ${po.invoiceNo || 'N/A'}.`,
+          poId: po.id,
+          poNumber: po.poNumber,
+          targetStage: po.workflowStage,
+          warehouseName: po.warehouseName,
+          dateStr: po.shipDate,
+          daysDiff: 0,
+        });
+      } else if (ship.isTomorrow) {
+        notifications.push({
+          id: `ship_tomorrow_${po.id}`,
+          type: 'SHIPMENT_TOMORROW',
+          severity: 'info',
+          title: `📦 Shipment Scheduled Tomorrow (${po.shipDate})`,
+          message: `PO #${po.poNumber} shipment is scheduled for tomorrow at ${po.warehouseName}.`,
+          poId: po.id,
+          poNumber: po.poNumber,
+          targetStage: po.workflowStage,
+          warehouseName: po.warehouseName,
+          dateStr: po.shipDate,
+          daysDiff: 1,
         });
       }
     }
