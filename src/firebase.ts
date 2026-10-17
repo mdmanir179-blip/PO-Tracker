@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
   createUserWithEmailAndPassword,
@@ -14,9 +14,42 @@ import {
 } from 'firebase/firestore';
 import activeFirebaseConfig from './firebaseConfig';
 
-const app = initializeApp(activeFirebaseConfig);
-export const db = getFirestore(app, activeFirebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
+let appInstance: any;
+try {
+  appInstance = getApps().length > 0 ? getApp() : initializeApp(activeFirebaseConfig);
+} catch (e) {
+  console.error('Failed to initialize Firebase app with active config, retrying:', e);
+  try {
+    appInstance = getApps()[0] || initializeApp(activeFirebaseConfig, 'instamart-app');
+  } catch (e2) {
+    console.error('Fatal Firebase app initialization error:', e2);
+  }
+}
+
+let dbInstance: any;
+try {
+  dbInstance = activeFirebaseConfig.firestoreDatabaseId
+    ? getFirestore(appInstance, activeFirebaseConfig.firestoreDatabaseId)
+    : getFirestore(appInstance);
+} catch (e) {
+  console.warn('Custom Firestore database connection failed, falling back to default:', e);
+  try {
+    dbInstance = getFirestore(appInstance);
+  } catch (e2) {
+    console.error('Failed to initialize default Firestore:', e2);
+  }
+}
+
+let authInstance: any;
+try {
+  authInstance = getAuth(appInstance);
+} catch (e) {
+  console.error('Failed to initialize Firebase Auth:', e);
+}
+
+export const app = appInstance;
+export const db = dbInstance;
+export const auth = authInstance;
 
 export interface AppUser {
   uid: string;
@@ -71,14 +104,18 @@ export function getActiveSessionUser(): AppUser | null {
 
 async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    if (db) {
+      await getDocFromServer(doc(db, 'test', 'connection'));
+    }
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+      console.warn('Firebase connection check: client is offline or network connecting.');
     }
   }
 }
-testConnection();
+if (typeof window !== 'undefined') {
+  setTimeout(testConnection, 2000);
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -110,18 +147,18 @@ export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
   path: string | null
-): never {
+): void {
   const active = getActiveSessionUser();
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid || active?.uid || null,
-      email: auth.currentUser?.email || active?.email || null,
-      emailVerified: auth.currentUser?.emailVerified ?? true,
-      isAnonymous: auth.currentUser?.isAnonymous ?? false,
-      tenantId: auth.currentUser?.tenantId || null,
+      userId: auth?.currentUser?.uid || active?.uid || null,
+      email: auth?.currentUser?.email || active?.email || null,
+      emailVerified: auth?.currentUser?.emailVerified ?? true,
+      isAnonymous: auth?.currentUser?.isAnonymous ?? false,
+      tenantId: auth?.currentUser?.tenantId || null,
       providerInfo:
-        auth.currentUser?.providerData?.map((p) => ({
+        auth?.currentUser?.providerData?.map((p: any) => ({
           providerId: p.providerId,
           email: p.email,
         })) || [],
@@ -129,8 +166,10 @@ export function handleFirestoreError(
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.warn('Firestore Operation Notice: ', JSON.stringify(errInfo));
+  if (operationType !== OperationType.LIST && operationType !== OperationType.GET) {
+    throw new Error(JSON.stringify(errInfo));
+  }
 }
 
 export const initAuth = (

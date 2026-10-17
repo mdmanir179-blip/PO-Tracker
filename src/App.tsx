@@ -365,27 +365,47 @@ export default function App() {
 
   // Listen to Firebase Auth state
   useEffect(() => {
+    // Safety watchdog: ensure authReady is ALWAYS true within 2.5 seconds
+    const fallbackTimer = setTimeout(() => {
+      setAuthReady((prev) => {
+        if (!prev) {
+          console.warn('Auth state resolution timed out, displaying interface');
+          return true;
+        }
+        return prev;
+      });
+      setIsLoadingProfile(false);
+    }, 2500);
+
     const unsubscribe = initAuth(async (user) => {
       setFirebaseUser(user);
       if (user) {
         setIsLoadingProfile(true);
         try {
-          const docRef = doc(db, 'employees', user.uid);
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
-            const prof = snap.data() as EmployeeProfile;
-            setEmployeeProfile({ ...prof, uid: user.uid });
-            if (!prof.orgScope) {
-              await updateDoc(docRef, {
-                orgScope: 'instamart_ops',
-                updatedAt: serverTimestamp(),
-              }).catch(() => {});
+          if (db) {
+            const docRef = doc(db, 'employees', user.uid);
+            const timeoutPromise = new Promise<null>((resolve) =>
+              setTimeout(() => resolve(null), 2000)
+            );
+            const snap: any = await Promise.race([getDoc(docRef), timeoutPromise]);
+            if (snap && snap.exists && snap.exists()) {
+              const prof = snap.data() as EmployeeProfile;
+              setEmployeeProfile({ ...prof, uid: user.uid });
+              if (!prof.orgScope) {
+                updateDoc(docRef, {
+                  orgScope: 'instamart_ops',
+                  updatedAt: serverTimestamp(),
+                }).catch(() => {});
+              }
+            } else {
+              setEmployeeProfile(null);
             }
           } else {
             setEmployeeProfile(null);
           }
         } catch (err) {
-          console.error('Error loading profile:', err);
+          console.warn('Notice loading profile:', err);
+          setEmployeeProfile(null);
         } finally {
           setIsLoadingProfile(false);
           setAuthReady(true);
@@ -395,7 +415,11 @@ export default function App() {
         setAuthReady(true);
       }
     });
-    return () => unsubscribe();
+
+    return () => {
+      clearTimeout(fallbackTimer);
+      unsubscribe();
+    };
   }, []);
 
   // Subscribe to Firestore collections when authenticated & profile registered

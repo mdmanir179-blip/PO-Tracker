@@ -16,33 +16,45 @@
     <meta property="og:description" content="Enterprise Instamart Purchase Order, In-Transit, RTO Management, GRN, and Discrepancy Note (DN) management system with role-based access control." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <script>
-      (function () {
-        try {
-          var currentFetch = window.fetch;
-          if (currentFetch) {
-            Object.defineProperty(window, 'fetch', {
-              configurable: true,
-              enumerable: true,
-              get: function () {
-                return currentFetch;
-              },
-              set: function (nextFetch) {
-                if (typeof nextFetch === 'function') {
-                  currentFetch = nextFetch;
-                }
-              },
-            });
-          }
-        } catch (e) {}
-      })();
-    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="bg-slate-950 text-slate-100">
+    <div id="root">
+      <div id="startup-loader" style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background-color: #020617; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 24px;">
+        <div style="width: 44px; height: 44px; border: 3px solid rgba(234, 88, 12, 0.2); border-top-color: #ea580c; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 20px;"></div>
+        <h1 style="font-size: 20px; font-weight: 700; margin: 0 0 8px 0; color: #ffffff; letter-spacing: -0.02em;">Instamart POsHub Enterprise</h1>
+        <p style="font-size: 13px; color: #94a3b8; margin: 0 0 16px 0; max-width: 420px; line-height: 1.5;">Initializing Purchase Order & Logistics Control Workspace...</p>
+        <noscript style="color: #ef4444; font-size: 14px; font-weight: bold; margin-top: 10px;">JavaScript is required to run this application.</noscript>
+        <div id="startup-diagnostic-box" style="display: none; max-width: 520px; width: 100%; background: #0f172a; border: 1px solid #ef4444; border-radius: 12px; padding: 16px; margin-top: 16px; text-align: left;">
+          <div style="color: #f87171; font-weight: bold; font-size: 13px; margin-bottom: 6px;">⚠️ Startup Warning</div>
+          <div id="startup-diagnostic-text" style="font-family: monospace; font-size: 11px; color: #fca5a5; max-height: 120px; overflow-y: auto; word-break: break-all;"></div>
+          <button onclick="localStorage.clear(); sessionStorage.clear(); window.location.reload();" style="margin-top: 12px; padding: 6px 14px; background: #ea580c; border: none; border-radius: 8px; color: #ffffff; font-weight: bold; font-size: 12px; cursor: pointer;">Clear Cache & Reload</button>
+        </div>
+      </div>
+      <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+      </style>
+      <script>
+        window.addEventListener('error', function(e) {
+          var box = document.getElementById('startup-diagnostic-box');
+          var txt = document.getElementById('startup-diagnostic-text');
+          if (box && txt) {
+            box.style.display = 'block';
+            txt.textContent = (e && e.error && e.error.message) || (e && e.message) || String(e);
+          }
+        });
+        window.addEventListener('unhandledrejection', function(e) {
+          var box = document.getElementById('startup-diagnostic-box');
+          var txt = document.getElementById('startup-diagnostic-text');
+          if (box && txt) {
+            box.style.display = 'block';
+            txt.textContent = (e && e.reason && (e.reason.message || String(e.reason))) || 'Promise rejected';
+          }
+        });
+      </script>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
