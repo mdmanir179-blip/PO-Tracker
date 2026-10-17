@@ -1988,21 +1988,19 @@ export default function App() {
     [purchaseOrders, searchQuery]
   );
 
-  // Active today's appointment or pickup (ship date) signals in Logistics
+  // Active today's pickup (ship date) signals in Logistics
   const logisticsTodaySignalPos = useMemo(() => {
     return purchaseOrders.filter((po) => {
-      const apt = getAppointmentStatus(po.appointmentDate);
       const ship = getShipmentDateStatus(po.shipDate);
-      return apt.isToday || ship.isToday;
+      return ship.isToday;
     });
   }, [purchaseOrders]);
 
   const logisticsDisplayList = useMemo(() => {
     if (logisticsSignalFilterOnly) {
       return allFilteredPos.filter((po) => {
-        const apt = getAppointmentStatus(po.appointmentDate);
         const ship = getShipmentDateStatus(po.shipDate);
-        return apt.isToday || ship.isToday;
+        return ship.isToday;
       });
     }
     return allFilteredPos;
@@ -3523,22 +3521,22 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Live Signal Alert Banner for Today's Appointments & Pickups */}
+              {/* Live Signal Alert Banner for Today's Pickups */}
               {logisticsTodaySignalPos.length > 0 && (
-                <div className="px-4 sm:px-6 py-2.5 bg-gradient-to-r from-emerald-500/15 via-amber-500/15 to-orange-500/15 border-b border-emerald-500/30 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                <div className="px-4 sm:px-6 py-2.5 bg-emerald-500/10 border-b border-emerald-500/25 flex flex-wrap items-center justify-between gap-2.5 text-xs">
                   <div className="flex items-center gap-2">
                     <span className="relative flex h-3 w-3 shrink-0">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                     </span>
                     <span className="font-bold text-slate-900 dark:text-white">
-                      ⚡ Live Logistics Signals:
+                      ⚡ Live Pickup Signals:
                     </span>
                     <span className="text-slate-700 dark:text-slate-300">
                       <strong className="text-emerald-600 dark:text-emerald-400 font-bold">
                         {logisticsTodaySignalPos.length} Purchase Order{logisticsTodaySignalPos.length === 1 ? '' : 's'}
                       </strong>{' '}
-                      scheduled for Appointment or Pickup <strong>TODAY</strong>!
+                      scheduled for Pickup <strong>TODAY</strong>!
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -3555,7 +3553,7 @@ export default function App() {
                       <span>
                         {logisticsSignalFilterOnly
                           ? 'Show All Deliveries'
-                          : `Filter Today's Signals (${logisticsTodaySignalPos.length})`}
+                          : `Filter Pickup Today (${logisticsTodaySignalPos.length})`}
                       </span>
                     </button>
                   </div>
@@ -3566,7 +3564,7 @@ export default function App() {
                 <div className="p-10 text-center text-xs text-slate-500 space-y-2">
                   <div className="font-semibold text-slate-700 dark:text-slate-300">
                     {logisticsSignalFilterOnly
-                      ? "No Purchase Orders with Appointment or Pickup scheduled for Today."
+                      ? "No Purchase Orders with Pickup scheduled for Today."
                       : "No Purchase Orders or Logistics deliveries found."}
                   </div>
                   {logisticsSignalFilterOnly ? (
@@ -3611,71 +3609,33 @@ export default function App() {
                       {logisticsDisplayList.map((po) => {
                         const aptStatus = getAppointmentStatus(po.appointmentDate);
                         const shipStatus = getShipmentDateStatus(po.shipDate);
-                        const hasSignal = aptStatus.isToday || shipStatus.isToday;
+                        const isPickupToday = shipStatus.isToday;
 
                         return (
                           <tr
                             key={po.id}
-                            className={`transition-colors ${
-                              aptStatus.isToday && shipStatus.isToday
-                                ? 'bg-purple-500/10 hover:bg-purple-500/15 border-l-4 border-l-purple-500'
-                                : aptStatus.isToday
-                                ? 'bg-amber-500/10 hover:bg-amber-500/15 border-l-4 border-l-amber-500'
-                                : shipStatus.isToday
-                                ? 'bg-emerald-500/10 hover:bg-emerald-500/15 border-l-4 border-l-emerald-500'
-                                : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
-                            }`}
+                            className="transition-colors hover:bg-slate-50/80 dark:hover:bg-slate-800/40"
                           >
                             <td className="py-3 px-4 font-mono whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
                                 <span className="font-bold text-orange-600 dark:text-orange-400">
                                   {po.poNumber}
                                 </span>
-                                {hasSignal && (
-                                  <span className="relative flex h-2.5 w-2.5 shrink-0" title="Active Signal: Action Scheduled for Today!">
-                                    <span
-                                      className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                                        aptStatus.isToday && shipStatus.isToday
-                                          ? 'bg-purple-400'
-                                          : aptStatus.isToday
-                                          ? 'bg-amber-400'
-                                          : 'bg-emerald-400'
-                                      }`}
-                                    ></span>
-                                    <span
-                                      className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-                                        aptStatus.isToday && shipStatus.isToday
-                                          ? 'bg-purple-500'
-                                          : aptStatus.isToday
-                                          ? 'bg-amber-500'
-                                          : 'bg-emerald-500'
-                                      }`}
-                                    ></span>
+                                {isPickupToday && (
+                                  <span className="relative flex h-2.5 w-2.5 shrink-0" title="Pickup Scheduled Today!">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                                   </span>
                                 )}
                               </div>
                               <div className="text-[10px] uppercase font-semibold text-slate-500">
                                 {po.workflowStage}
                               </div>
-                              {hasSignal && (
+                              {isPickupToday && (
                                 <div className="mt-1">
-                                  <span
-                                    className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded shadow-xs inline-flex items-center gap-1 animate-pulse ${
-                                      aptStatus.isToday && shipStatus.isToday
-                                        ? 'bg-purple-600 text-white'
-                                        : aptStatus.isToday
-                                        ? 'bg-amber-500 text-white'
-                                        : 'bg-emerald-600 text-white'
-                                    }`}
-                                  >
-                                    <Radio className="w-3 h-3 shrink-0" />
-                                    <span>
-                                      {aptStatus.isToday && shipStatus.isToday
-                                        ? 'SIGNAL: APPT + PICKUP TODAY'
-                                        : aptStatus.isToday
-                                        ? 'SIGNAL: APPT TODAY'
-                                        : 'SIGNAL: PICKUP TODAY'}
-                                    </span>
+                                  <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded shadow-xs inline-flex items-center gap-1 bg-emerald-600 text-white animate-pulse">
+                                    <Truck className="w-3 h-3 shrink-0" />
+                                    <span>PICKUP TODAY SIGNAL</span>
                                   </span>
                                 </div>
                               )}
@@ -3697,14 +3657,14 @@ export default function App() {
                                 <span className="text-slate-400 font-sans text-[10px]">Pickup:</span>
                                 <span
                                   className={`font-semibold ${
-                                    shipStatus.isToday
+                                    isPickupToday
                                       ? 'text-emerald-600 dark:text-emerald-400 border-b-2 border-emerald-500 pb-0.5 bg-emerald-500/10 px-1 rounded shadow-xs'
                                       : 'text-slate-600 dark:text-slate-300'
                                   }`}
                                 >
                                   {po.shipDate || '-'}
                                 </span>
-                                {shipStatus.isToday && (
+                                {isPickupToday && (
                                   <span className="relative flex h-2 w-2">
                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -3713,35 +3673,15 @@ export default function App() {
                               </div>
                               <div className="flex items-center gap-1.5 mt-0.5">
                                 <span className="text-slate-400 font-sans text-[10px]">Appt:</span>
-                                <span
-                                  className={`font-semibold ${
-                                    aptStatus.isToday
-                                      ? 'text-amber-600 dark:text-amber-400 border-b-2 border-amber-500 pb-0.5 bg-amber-500/10 px-1 rounded shadow-xs'
-                                      : 'text-slate-600 dark:text-slate-300'
-                                  }`}
-                                >
+                                <span className="text-slate-600 dark:text-slate-300 font-medium">
                                   {po.appointmentDate || '-'}
                                 </span>
-                                {aptStatus.isToday && (
-                                  <span className="relative flex h-2 w-2">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                                  </span>
-                                )}
                               </div>
-                              {shipStatus.isToday && (
+                              {isPickupToday && (
                                 <div className="mt-1">
                                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-600 text-white font-extrabold text-[10px] animate-pulse shadow-xs">
                                     <Truck className="w-3 h-3" />
-                                    <span>PICKUP TODAY SIGNAL!</span>
-                                  </span>
-                                </div>
-                              )}
-                              {aptStatus.isToday && (
-                                <div className="mt-1">
-                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500 text-white font-extrabold text-[10px] animate-pulse shadow-xs">
-                                    <Calendar className="w-3 h-3" />
-                                    <span>APPOINTMENT TODAY SIGNAL!</span>
+                                    <span>PICKUP TODAY SIGNAL</span>
                                   </span>
                                 </div>
                               )}
