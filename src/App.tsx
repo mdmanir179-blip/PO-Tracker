@@ -78,6 +78,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { PoFormModal, PoFormValues } from './components/PoFormModal';
 import { DnFormModal, DnFormValues } from './components/DnFormModal';
 import { GrnUpdateModal, GrnUpdateSubmitData } from './components/GrnUpdateModal';
+import { LogisticsAttemptModal, LogisticsAttemptSubmitData } from './components/LogisticsAttemptModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PaymentTrackerTab } from './components/PaymentTrackerTab';
@@ -184,6 +185,11 @@ export default function App() {
   const [isGrnModalOpen, setIsGrnModalOpen] = useState(false);
   const [grnTargetPo, setGrnTargetPo] = useState<PurchaseOrder | null>(null);
   const [grnModalMode, setGrnModalMode] = useState<'INWARD_TO_GRN' | 'UPDATE_GRN_DN'>('INWARD_TO_GRN');
+
+  // Logistics Attempt Modal & Filter State
+  const [isAttemptModalOpen, setIsAttemptModalOpen] = useState(false);
+  const [attemptTargetPo, setAttemptTargetPo] = useState<PurchaseOrder | null>(null);
+  const [logisticsFailedFilterOnly, setLogisticsFailedFilterOnly] = useState(false);
 
   const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<EmployeeProfile | null>(null);
@@ -1131,6 +1137,13 @@ export default function App() {
         paymentDueDate: values.paymentDueDate || editingPo.paymentDueDate || '',
         paymentNotes: values.paymentNotes || editingPo.paymentNotes || '',
         paymentHistory: editingPo.paymentHistory || [],
+        logisticsStatus: values.logisticsStatus || editingPo.logisticsStatus || (values.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PENDING_PICKUP'),
+        attemptFailed: Boolean(values.attemptFailed !== undefined ? values.attemptFailed : editingPo.attemptFailed),
+        attemptFailReason: values.attemptFailReason !== undefined ? values.attemptFailReason : (editingPo.attemptFailReason || ''),
+        attemptFailDate: values.attemptFailDate !== undefined ? values.attemptFailDate : (editingPo.attemptFailDate || ''),
+        attemptCount: typeof values.attemptCount === 'number' ? values.attemptCount : (editingPo.attemptCount || 0),
+        attemptFailRemarks: values.attemptFailRemarks !== undefined ? values.attemptFailRemarks : (editingPo.attemptFailRemarks || ''),
+        rescheduledApptDate: values.rescheduledApptDate !== undefined ? values.rescheduledApptDate : (editingPo.rescheduledApptDate || ''),
         updatedByUid: firebaseUser.uid,
         updatedByName: employeeProfile.employeeName.slice(0, 100),
         updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
@@ -1217,6 +1230,13 @@ export default function App() {
         paymentDueDate: values.paymentDueDate || '',
         paymentNotes: values.paymentNotes || '',
         paymentHistory: [],
+        logisticsStatus: values.logisticsStatus || (values.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PENDING_PICKUP'),
+        attemptFailed: Boolean(values.attemptFailed),
+        attemptFailReason: values.attemptFailReason || '',
+        attemptFailDate: values.attemptFailDate || '',
+        attemptCount: values.attemptCount || 0,
+        attemptFailRemarks: values.attemptFailRemarks || '',
+        rescheduledApptDate: values.rescheduledApptDate || '',
         orgScope: 'instamart_ops',
         createdByUid: firebaseUser.uid,
         createdByName: employeeProfile.employeeName.slice(0, 100),
@@ -1624,6 +1644,7 @@ export default function App() {
     try {
       await updateDoc(poRef, {
         pickupStatus: 'YES',
+        logisticsStatus: 'IN_TRANSIT',
         workflowStage: 'IN_TRANSIT',
         status: 'In Transit',
         updatedByUid: firebaseUser.uid,
@@ -1652,6 +1673,49 @@ export default function App() {
       setActiveTab('IN_TRANSIT');
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
+  // Confirm Logistics Delivery Attempt Failed, Appointment Missed, or Rescheduled update
+  const handleConfirmLogisticsAttempt = async (data: LogisticsAttemptSubmitData) => {
+    if (!firebaseUser || !employeeProfile || !attemptTargetPo) return;
+    const poRef = doc(db, 'purchase_orders', attemptTargetPo.id);
+
+    try {
+      const updatePayload: Record<string, any> = {
+        logisticsStatus: data.logisticsStatus,
+        attemptFailed: Boolean(data.attemptFailed),
+        attemptFailReason: data.attemptFailReason || '',
+        attemptFailDate: data.attemptFailDate || '',
+        attemptCount: data.attemptCount || 0,
+        attemptFailRemarks: data.attemptFailRemarks || '',
+        rescheduledApptDate: data.rescheduledApptDate || '',
+        status: data.status.slice(0, 60),
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      };
+
+      if (data.logisticsStatus === 'RESCHEDULED' && data.rescheduledApptDate) {
+        updatePayload.appointmentDate = data.rescheduledApptDate;
+      }
+
+      await updateDoc(poRef, updatePayload);
+
+      await recordActivity(
+        data.attemptFailed
+          ? `Marked Attempt Failed / Appt Missed (${data.logisticsStatus})`
+          : `Updated Logistics Status (${data.logisticsStatus})`,
+        'LOGISTICS',
+        attemptTargetPo.poNumber,
+        `PO ${attemptTargetPo.poNumber} Logistics status set to "${data.logisticsStatus}". Reason: "${data.attemptFailReason || 'None'}". Updated by ${employeeProfile.employeeName} (${employeeProfile.employeeId}).`
+      );
+
+      setIsAttemptModalOpen(false);
+      setAttemptTargetPo(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${attemptTargetPo.id}`);
     }
   };
 

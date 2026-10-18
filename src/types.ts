@@ -25,6 +25,8 @@ export interface EmployeeProfile {
   accessStatus?: 'APPROVED' | 'RESTRICTED';
   permissions?: EmployeePermissions;
   spreadsheetId: string;
+  isOnline?: boolean;
+  lastActiveAt?: Timestamp | Date | string;
   orgScope?: 'instamart_ops';
   createdAt?: Timestamp | Date | string;
   updatedAt?: Timestamp | Date | string;
@@ -98,7 +100,14 @@ export interface PurchaseOrder {
   paymentDueDate?: string;
   paymentHistory?: PaymentTransaction[];
   paymentNotes?: string;
-  lastPaymentDate?: string;
+  // Logistics Attempt Tracking & Status Fields
+  logisticsStatus?: string;
+  attemptFailed?: boolean;
+  attemptFailReason?: string;
+  attemptFailDate?: string;
+  attemptCount?: number;
+  attemptFailRemarks?: string;
+  rescheduledApptDate?: string;
   orgScope: 'instamart_ops';
   createdByUid: string;
   createdByName: string;

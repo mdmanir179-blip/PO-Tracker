@@ -40,6 +40,13 @@ export interface PoFormValues {
   paymentStatus?: 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE' | 'CANCELLED';
   paymentDueDate?: string;
   paymentNotes?: string;
+  logisticsStatus?: string;
+  attemptFailed?: boolean;
+  attemptFailReason?: string;
+  attemptFailDate?: string;
+  attemptCount?: number;
+  attemptFailRemarks?: string;
+  rescheduledApptDate?: string;
 }
 
 interface PoFormModalProps {
@@ -82,6 +89,13 @@ const DEFAULT_VALUES: PoFormValues = {
   paymentStatus: 'PENDING',
   paymentDueDate: '',
   paymentNotes: '',
+  logisticsStatus: 'PENDING_PICKUP',
+  attemptFailed: false,
+  attemptFailReason: '',
+  attemptFailDate: '',
+  attemptCount: 0,
+  attemptFailRemarks: '',
+  rescheduledApptDate: '',
 };
 
 export const PoFormModal: React.FC<PoFormModalProps> = ({
@@ -171,6 +185,13 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
         paymentStatus: initialPo.paymentStatus || 'PENDING',
         paymentDueDate: initialPo.paymentDueDate || '',
         paymentNotes: initialPo.paymentNotes || '',
+        logisticsStatus: initialPo.logisticsStatus || (initialPo.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PENDING_PICKUP'),
+        attemptFailed: Boolean(initialPo.attemptFailed),
+        attemptFailReason: initialPo.attemptFailReason || '',
+        attemptFailDate: initialPo.attemptFailDate || '',
+        attemptCount: initialPo.attemptCount || 0,
+        attemptFailRemarks: initialPo.attemptFailRemarks || '',
+        rescheduledApptDate: initialPo.rescheduledApptDate || '',
       });
     } else {
       const today = new Date().toISOString().slice(0, 10);
@@ -916,9 +937,13 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
               <select
                 disabled={isLockedInTransit}
                 value={values.pickupStatus}
-                onChange={(e) =>
-                  handleChange('pickupStatus', e.target.value as 'YES' | 'NO')
-                }
+                onChange={(e) => {
+                  const newPickup = e.target.value as 'YES' | 'NO';
+                  handleChange('pickupStatus', newPickup);
+                  if (newPickup === 'YES' && (!values.logisticsStatus || values.logisticsStatus === 'PENDING_PICKUP')) {
+                    handleChange('logisticsStatus', 'IN_TRANSIT');
+                  }
+                }}
                 className={`${inputClass} font-bold ${
                   values.pickupStatus === 'YES'
                     ? 'text-emerald-600 dark:text-emerald-400'
@@ -930,9 +955,40 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
               </select>
             </div>
 
+            {/* Logistics Operational Status */}
+            <div>
+              <label className={labelClass}>22. Logistics Status</label>
+              <select
+                value={values.logisticsStatus || 'PENDING_PICKUP'}
+                onChange={(e) => {
+                  const s = e.target.value;
+                  handleChange('logisticsStatus', s);
+                  if (s === 'ATTEMPT_FAILED' || s === 'APPOINTMENT_MISSED') {
+                    handleChange('attemptFailed', true);
+                    if (!values.attemptFailDate) {
+                      handleChange('attemptFailDate', values.appointmentDate || new Date().toISOString().slice(0, 10));
+                    }
+                    if (!values.attemptCount) {
+                      handleChange('attemptCount', 1);
+                    }
+                  } else if (s === 'IN_TRANSIT' || s === 'OUT_FOR_DELIVERY') {
+                    handleChange('attemptFailed', false);
+                  }
+                }}
+                className={`${inputClass} font-semibold`}
+              >
+                <option value="PENDING_PICKUP">Ready for Pickup / Pending</option>
+                <option value="IN_TRANSIT">In Transit (Normal)</option>
+                <option value="OUT_FOR_DELIVERY">Out for Delivery / At Hub Gate</option>
+                <option value="APPOINTMENT_MISSED">⚠️ Appointment Missed</option>
+                <option value="ATTEMPT_FAILED">🚨 Delivery Attempt Failed</option>
+                <option value="RESCHEDULED">🗓️ Re-Attempt Scheduled</option>
+              </select>
+            </div>
+
             {/* 20. Comment */}
-            <div className="sm:col-span-2 lg:col-span-4">
-              <label className={labelClass}>20. Comment</label>
+            <div className="sm:col-span-2">
+              <label className={labelClass}>20. Dispatch / Vehicle Comment</label>
               <input
                 type="text"
                 disabled={isLockedInTransit}
@@ -941,6 +997,104 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
                 placeholder="Enter dispatch remarks, vehicle details, or special instructions..."
                 className={inputClass}
               />
+            </div>
+
+            {/* Delivery Attempt / Missed Appt Detailed Tracking Box */}
+            <div className="sm:col-span-2 lg:col-span-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(values.attemptFailed)}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      handleChange('attemptFailed', checked);
+                      if (checked) {
+                        if (!values.logisticsStatus || values.logisticsStatus === 'IN_TRANSIT' || values.logisticsStatus === 'PENDING_PICKUP') {
+                          handleChange('logisticsStatus', 'ATTEMPT_FAILED');
+                        }
+                        if (!values.attemptFailDate) {
+                          handleChange('attemptFailDate', values.appointmentDate || new Date().toISOString().slice(0, 10));
+                        }
+                        if (!values.attemptCount) {
+                          handleChange('attemptCount', 1);
+                        }
+                        if (!values.attemptFailReason) {
+                          handleChange('attemptFailReason', 'Warehouse Gate Closed / Entry Denied');
+                        }
+                      } else {
+                        if (values.logisticsStatus === 'ATTEMPT_FAILED' || values.logisticsStatus === 'APPOINTMENT_MISSED') {
+                          handleChange('logisticsStatus', values.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PENDING_PICKUP');
+                        }
+                      }
+                    }}
+                    className="w-4 h-4 rounded text-red-600 focus:ring-red-500"
+                  />
+                  <span className="text-xs font-bold text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4" />
+                    <span>Mark Appointment Date Missed or Delivery Attempt Failed</span>
+                  </span>
+                </label>
+                {values.attemptFailed && (
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-red-500/20 text-red-600 dark:text-red-400">
+                    Active Attempt Failure Alert
+                  </span>
+                )}
+              </div>
+
+              {values.attemptFailed && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+                  <div>
+                    <label className={labelClass}>Failure Reason *</label>
+                    <input
+                      type="text"
+                      value={values.attemptFailReason || ''}
+                      onChange={(e) => handleChange('attemptFailReason', e.target.value)}
+                      placeholder="e.g. Warehouse Gate Closed / Entry Denied"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Failure Date *</label>
+                    <input
+                      type="date"
+                      value={values.attemptFailDate || ''}
+                      onChange={(e) => handleChange('attemptFailDate', e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Attempt Count</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={values.attemptCount || 1}
+                      onChange={(e) => handleChange('attemptCount', Math.max(1, parseInt(e.target.value) || 1))}
+                      className={`${inputClass} font-mono`}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Rescheduled Appt Date</label>
+                    <input
+                      type="date"
+                      value={values.rescheduledApptDate || ''}
+                      onChange={(e) => handleChange('rescheduledApptDate', e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="sm:col-span-2 lg:col-span-4">
+                    <label className={labelClass}>Transporter / Driver Remarks</label>
+                    <input
+                      type="text"
+                      value={values.attemptFailRemarks || ''}
+                      onChange={(e) => handleChange('attemptFailRemarks', e.target.value)}
+                      placeholder="e.g. Driver reached 15:30, slot missed. Re-attempt booked for tomorrow."
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

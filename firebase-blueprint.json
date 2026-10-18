@@ -343,6 +343,39 @@
           "maxLength": 30,
           "description": "Date of the most recent payment installment"
         },
+        "logisticsStatus": {
+          "type": "string",
+          "maxLength": 60,
+          "description": "Operational logistics tracking state (e.g. In Transit, Attempt Failed, Appointment Missed, Rescheduled, Delivered)"
+        },
+        "attemptFailed": {
+          "type": "boolean",
+          "description": "Whether an appointment or delivery attempt was missed or failed"
+        },
+        "attemptFailReason": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Reason why the appointment slot was missed or delivery attempt failed"
+        },
+        "attemptFailDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Date when attempt failed or appointment was missed"
+        },
+        "attemptCount": {
+          "type": "number",
+          "description": "Number of delivery or appointment attempts made"
+        },
+        "attemptFailRemarks": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Detailed remarks on attempt failure, driver notes, or gate pass rejection"
+        },
+        "rescheduledApptDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Next rescheduled appointment date"
+        },
         "orgScope": {
           "type": "string",
           "enum": ["instamart_ops"],

@@ -82,6 +82,7 @@ service cloud.firestore {
           'rtoPickDate', 'rtoReceivedAtWh', 'rtoReason', 'rtoRemarks',
           'totalAmount', 'originalAmount', 'dnQty', 'dnAmount', 'acceptedQty', 'paidAmount', 'paymentStatus', 'paymentDueDate',
           'paymentHistory', 'paymentNotes', 'lastPaymentDate',
+          'logisticsStatus', 'attemptFailed', 'attemptFailReason', 'attemptFailDate', 'attemptCount', 'attemptFailRemarks', 'rescheduledApptDate',
           'orgScope',
           'createdByUid', 'createdByName', 'createdByEmpId',
           'updatedByUid', 'updatedByName', 'updatedByEmpId',
