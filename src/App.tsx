@@ -33,6 +33,7 @@ import {
   Users,
   Package,
   ShieldCheck,
+  ShieldAlert,
   Clock,
   AlertTriangle,
   Phone,
@@ -76,7 +77,7 @@ import {
 import { AuthScreen } from './components/AuthScreen';
 import { PoFormModal, PoFormValues } from './components/PoFormModal';
 import { DnFormModal, DnFormValues } from './components/DnFormModal';
-import { GrnUpdateModal } from './components/GrnUpdateModal';
+import { GrnUpdateModal, GrnUpdateSubmitData } from './components/GrnUpdateModal';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { PerformanceDashboard } from './components/PerformanceDashboard';
 import { PaymentTrackerTab } from './components/PaymentTrackerTab';
@@ -1655,13 +1656,7 @@ export default function App() {
   };
 
   // Confirm Inward Success -> Shift PO to GRN or update GRN DN details
-  const handleConfirmGrnUpdate = async (data: {
-    grnNumber: string;
-    grnDate: string;
-    hasDn: boolean;
-    grnDnSummary: string;
-    status: string;
-  }) => {
+  const handleConfirmGrnUpdate = async (data: GrnUpdateSubmitData) => {
     if (!firebaseUser || !employeeProfile || !grnTargetPo) return;
     const poRef = doc(db, 'purchase_orders', grnTargetPo.id);
 
@@ -1673,36 +1668,86 @@ export default function App() {
     dueObj.setMonth(dueObj.getMonth() + 1);
     const autoPaymentDueDate = dueObj.toISOString().slice(0, 10);
 
+    const hasDn = Boolean(data.hasDn);
+    const dnQty = hasDn ? Math.max(0, Number(data.dnQty) || 0) : 0;
+    const dnAmount = hasDn ? Math.max(0, Number(data.dnAmount) || 0) : 0;
+    const acceptedQty = hasDn
+      ? Math.max(0, Number(data.acceptedQty) || (grnTargetPo.totalQty - dnQty))
+      : grnTargetPo.totalQty;
+
+    const originalAmount = typeof data.originalAmount === 'number' && data.originalAmount > 0
+      ? data.originalAmount
+      : (typeof grnTargetPo.originalAmount === 'number' && grnTargetPo.originalAmount > 0
+        ? grnTargetPo.originalAmount
+        : (typeof grnTargetPo.totalAmount === 'number' && grnTargetPo.totalAmount > 0
+          ? (grnTargetPo.hasDn && grnTargetPo.dnAmount ? grnTargetPo.totalAmount + grnTargetPo.dnAmount : grnTargetPo.totalAmount)
+          : grnTargetPo.totalQty * 320));
+
+    const netPayableAmount = hasDn && dnAmount > 0
+      ? Math.max(0, originalAmount - dnAmount)
+      : (typeof data.netPayableAmount === 'number' ? data.netPayableAmount : originalAmount);
+
     try {
+      const updatePayload: any = {
+        status: data.status.slice(0, 60),
+        grnNumber: data.grnNumber.slice(0, 80),
+        grnDate: effectiveGrnDate,
+        grnDnSummary: data.grnDnSummary.slice(0, 500),
+        hasDn,
+        dnQty,
+        dnAmount,
+        acceptedQty,
+        originalAmount,
+        totalAmount: netPayableAmount,
+        paymentDueDate: grnTargetPo.paymentDueDate || autoPaymentDueDate,
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      };
+
       if (isTransitionFromTransit) {
-        await updateDoc(poRef, {
-          workflowStage: 'GRN',
-          inwardStatus: 'SUCCESS',
-          status: data.status.slice(0, 60),
-          grnNumber: data.grnNumber.slice(0, 80),
-          grnDate: effectiveGrnDate,
-          grnDnSummary: data.grnDnSummary.slice(0, 500),
-          hasDn: data.hasDn,
-          paymentDueDate: grnTargetPo.paymentDueDate || autoPaymentDueDate,
-          updatedByUid: firebaseUser.uid,
-          updatedByName: employeeProfile.employeeName.slice(0, 100),
-          updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
-          updatedAt: serverTimestamp(),
-        });
+        updatePayload.workflowStage = 'GRN';
+        updatePayload.inwardStatus = 'SUCCESS';
       } else {
-        await updateDoc(poRef, {
-          status: data.status.slice(0, 60),
-          grnNumber: data.grnNumber.slice(0, 80),
-          grnDate: effectiveGrnDate,
-          grnDnSummary: data.grnDnSummary.slice(0, 500),
-          hasDn: data.hasDn,
-          comment: grnTargetPo.comment,
-          paymentDueDate: grnTargetPo.paymentDueDate || autoPaymentDueDate,
+        updatePayload.comment = grnTargetPo.comment;
+      }
+
+      await updateDoc(poRef, updatePayload);
+
+      // Automatically register a Discrepancy Note (DN) record in Instamart DN Tracker so it appears there immediately
+      if (hasDn && (dnQty > 0 || dnAmount > 0) && data.autoCreateDnRecord !== false) {
+        const dnDocId = generateSafeId('dn_grn');
+        const cleanGrnNo = data.grnNumber.replace(/[^a-zA-Z0-9_-]/g, '') || grnTargetPo.poNumber;
+        const newDnDoc: Omit<DnRecord, 'id'> = {
+          dnDate: effectiveGrnDate,
+          dnNumber: `DN-${cleanGrnNo}`.slice(0, 80),
+          facilityName: grnTargetPo.warehouseName.slice(0, 120),
+          parentPoDetails: `PO: ${grnTargetPo.poNumber} | GRN: ${data.grnNumber} | Inv: ${grnTargetPo.invoiceNo || 'N/A'}`.slice(0, 200),
+          dnSkuIdItemName: `${grnTargetPo.itemId} | ${grnTargetPo.itemName}`.slice(0, 250),
+          dnQty,
+          whPocDetails: `GRN DN Deduction: ₹${dnAmount.toLocaleString('en-IN')} (Net GRN: ₹${netPayableAmount.toLocaleString('en-IN')})`.slice(0, 200),
+          lrNo: (grnTargetPo.pickupTrackingId || grnTargetPo.asn || 'GRN-INWARD').slice(0, 80),
+          reportFileName: `GRN_DN_${grnTargetPo.poNumber}.pdf`.slice(0, 200),
+          reportFileType: 'application/pdf',
+          reportFileSize: 0,
+          reportFileDataUrl: '',
+          orgScope: 'instamart_ops',
+          createdByUid: firebaseUser.uid,
+          createdByName: employeeProfile.employeeName.slice(0, 100),
+          createdByEmpId: employeeProfile.employeeId.slice(0, 50),
           updatedByUid: firebaseUser.uid,
           updatedByName: employeeProfile.employeeName.slice(0, 100),
           updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        });
+        };
+
+        try {
+          await setDoc(doc(db, 'dn_records', dnDocId), newDnDoc);
+        } catch (dnErr) {
+          console.warn('Failed to auto-create DN record in dn_records collection:', dnErr);
+        }
       }
 
       await recordActivity(
@@ -1712,7 +1757,7 @@ export default function App() {
         'GRN',
         grnTargetPo.poNumber,
         `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated GRN ${data.grnNumber} for PO ${grnTargetPo.poNumber}${
-          data.hasDn ? ` with DN: ${data.grnDnSummary}` : ''
+          hasDn ? ` with DN: ${dnQty} pcs reduced (-₹${dnAmount.toLocaleString('en-IN')}). Net GRN & Payable: ₹${netPayableAmount.toLocaleString('en-IN')}` : ''
         }.`
       );
       setActiveTab('GRN');
@@ -2047,6 +2092,21 @@ export default function App() {
             po.grnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
             po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
             po.itemName.toLowerCase().includes(searchQuery.toLowerCase()))
+      ),
+    [purchaseOrders, searchQuery]
+  );
+
+  const grnDnList = useMemo(
+    () =>
+      purchaseOrders.filter(
+        (po) =>
+          po.hasDn &&
+          (po.workflowStage === 'GRN' || po.inwardStatus === 'SUCCESS') &&
+          (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.grnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.itemId.toLowerCase().includes(searchQuery.toLowerCase()))
       ),
     [purchaseOrders, searchQuery]
   );
@@ -4337,103 +4397,178 @@ export default function App() {
                       }`}
                     >
                       <th className="py-3 px-4 whitespace-nowrap">GRN Number</th>
-                      <th className="py-3 px-4 whitespace-nowrap">PO Number & Date</th>
+                      <th className="py-3 px-4 whitespace-nowrap">PO Number &amp; Date</th>
                       <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Item ID & Name</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Total Qty</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Item ID &amp; Name</th>
+                      <th className="py-3 px-4 text-right whitespace-nowrap">Quantity (Shipped ➔ DN ➔ Accepted)</th>
+                      <th className="py-3 px-4 text-right whitespace-nowrap">GRN Value &amp; Net Payment (₹)</th>
                       <th className="py-3 px-4 whitespace-nowrap">GRN Status</th>
                       <th className="py-3 px-4 whitespace-nowrap">DN Present?</th>
                       <th className="py-3 px-4 whitespace-nowrap">GRN DN Summary / Remarks</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Updated By (Employee)</th>
+                      <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
                       <th className="py-3 px-4 text-right whitespace-nowrap">DN / GRN Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {grnList.map((po) => (
-                      <tr
-                        key={po.id}
-                        className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
-                      >
-                        <td className="py-3 px-4 font-mono font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                          {po.grnNumber || 'GRN-VERIFIED'}
-                        </td>
-                        <td className="py-3 px-4 font-mono whitespace-nowrap">
-                          <div className="font-semibold">{po.poNumber}</div>
-                          <div className="text-[11px] text-slate-500">{po.orderDate}</div>
-                        </td>
-                        <td className="py-3 px-4 whitespace-nowrap">{po.warehouseName}</td>
-                        <td className="py-3 px-4 min-w-[200px]">
-                          <div className="font-mono text-[11px] text-slate-500">{po.itemId}</div>
-                          <div className="font-medium truncate max-w-[220px]">{po.itemName}</div>
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-semibold tabular-nums">
-                          {po.totalQty}
-                        </td>
-                        <td className="py-3 px-4 whitespace-nowrap font-medium">
-                          {po.status}
-                        </td>
-                        <td className="py-3 px-4 whitespace-nowrap font-mono">
-                          {po.hasDn ? (
-                            <span className="text-red-600 dark:text-red-400 font-bold">
-                              YES (DN Raised)
+                    {grnList.map((po) => {
+                      const dnQty = po.hasDn ? (po.dnQty || 0) : 0;
+                      const acceptedQty = po.hasDn
+                        ? (typeof po.acceptedQty === 'number' ? po.acceptedQty : Math.max(0, po.totalQty - dnQty))
+                        : po.totalQty;
+                      const paymentInfo = calculatePaymentDetails(po);
+
+                      return (
+                        <tr
+                          key={po.id}
+                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                        >
+                          <td className="py-3 px-4 font-mono font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                            {po.grnNumber || 'GRN-VERIFIED'}
+                            {po.grnDate && (
+                              <div className="text-[10px] text-slate-400 font-normal">
+                                {po.grnDate}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 font-mono whitespace-nowrap">
+                            <div className="font-semibold text-orange-600 dark:text-orange-400">
+                              {po.poNumber}
+                            </div>
+                            <div className="text-[11px] text-slate-500">{po.orderDate}</div>
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap font-medium">
+                            {po.warehouseName}
+                          </td>
+                          <td className="py-3 px-4 min-w-[190px]">
+                            <div className="font-mono text-[11px] text-orange-600 dark:text-orange-400 font-semibold">
+                              {po.itemId}
+                            </div>
+                            <div className="font-medium truncate max-w-[210px]">{po.itemName}</div>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono whitespace-nowrap">
+                            {po.hasDn && dnQty > 0 ? (
+                              <div>
+                                <div className="font-bold text-emerald-600 dark:text-emerald-400 text-xs">
+                                  {acceptedQty} Accepted in GRN
+                                </div>
+                                <div className="text-[11px] text-red-500 font-bold">
+                                  -{dnQty} DN / Shortage
+                                </div>
+                                <div className="text-[10px] text-slate-400">
+                                  ({po.totalQty} Shipped)
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="font-bold text-slate-900 dark:text-slate-100 text-xs">
+                                  {po.totalQty} units
+                                </div>
+                                <div className="text-[10px] text-emerald-500 font-medium">
+                                  Full Accepted
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono whitespace-nowrap">
+                            {po.hasDn && (po.dnAmount || 0) > 0 ? (
+                              <div>
+                                <div className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">
+                                  {formatINR(paymentInfo.totalAmount)} Net
+                                </div>
+                                <div className="text-[11px] text-red-500 font-bold">
+                                  -{formatINR(po.dnAmount || 0)} Decreased
+                                </div>
+                                <div className="text-[10px] text-slate-400 line-through">
+                                  {formatINR(po.originalAmount || (paymentInfo.totalAmount + (po.dnAmount || 0)))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="font-bold text-slate-900 dark:text-slate-100 text-xs">
+                                {formatINR(paymentInfo.totalAmount)}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap font-medium">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                              po.status.includes('DN')
+                                ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                            }`}>
+                              {po.status}
                             </span>
-                          ) : (
-                            <span className="text-emerald-600 dark:text-emerald-400">
-                              NO (Clean GRN)
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 max-w-[240px]">
-                          {po.grnDnSummary || 'No discrepancy noted'}
-                        </td>
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="font-semibold">{po.updatedByName}</div>
-                          <div className="font-mono text-[11px] text-slate-500">
-                            ID: {po.updatedByEmpId}
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-2">
-                            {canUserManageGrn && (
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap font-mono">
+                            {po.hasDn ? (
+                              <div className="space-y-1">
+                                <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-600 dark:text-red-400 font-bold text-[11px] block text-center">
+                                  YES (DN Raised)
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab('DN_TRACKER')}
+                                  className="text-[10px] text-orange-600 dark:text-orange-400 hover:underline cursor-pointer block text-center"
+                                >
+                                  View in DN Tracker &rarr;
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold text-[11px]">
+                                NO (Clean GRN)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 max-w-[220px]">
+                            <div className="truncate text-xs" title={po.grnDnSummary}>
+                              {po.grnDnSummary || 'No discrepancy noted'}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <div className="font-semibold">{po.updatedByName}</div>
+                            <div className="font-mono text-[11px] text-slate-500">
+                              ID: {po.updatedByEmpId}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1.5">
+                              {canUserManageGrn && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setGrnTargetPo(po);
+                                    setGrnModalMode('UPDATE_GRN_DN');
+                                    setIsGrnModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer"
+                                >
+                                  Update GRN / DN
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setGrnTargetPo(po);
-                                  setGrnModalMode('UPDATE_GRN_DN');
-                                  setIsGrnModalOpen(true);
+                                  setActiveTab('PAYMENTS');
+                                  setSearchQuery(po.poNumber);
                                 }}
-                                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium cursor-pointer"
+                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-600/20 text-xs font-semibold cursor-pointer border border-emerald-500/20"
+                                title="View Payment Details"
                               >
-                                Update GRN / DN
+                                Payments &rarr;
                               </button>
-                            )}
-                            {canUserManageDn && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingDn(null);
-                                  setPrefillDnFromPo(po);
-                                  setIsDnModalOpen(true);
-                                }}
-                                className="px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold cursor-pointer"
-                              >
-                                + Log in DN Tracker
-                              </button>
-                            )}
-                            {isAdmin && (
-                              <button
-                                type="button"
-                                onClick={() => requestDeletePo(po)}
-                                className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
-                                title="Admin Delete GRN Record"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => requestDeletePo(po)}
+                                  className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
+                                  title="Admin Delete GRN Record"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -4441,10 +4576,166 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: INSTAMART DN TRACKER (AUTOMATICALLY SHOWS IN-TRANSIT PRODUCTS + LOGGED DN RECORDS) */}
+        {/* TAB 4: INSTAMART DN TRACKER (AUTOMATICALLY SHOWS GRN DISCREPANCY PRODUCTS + IN-TRANSIT + LOGGED DN RECORDS) */}
         {activeTab === 'DN_TRACKER' && (
           <div className="space-y-6">
-            {/* Automatic In-Transit Products Feed in DN Tab */}
+            {/* 1. Automatic GRN & Inward Discrepancy Products Feed in DN Tab */}
+            <div
+              className={`rounded-xl border overflow-hidden ${
+                darkMode
+                  ? 'bg-slate-900 border-slate-800'
+                  : isGrey
+                  ? 'bg-zinc-100 border-zinc-300'
+                  : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-red-500/5 via-orange-500/5 to-transparent">
+                <div>
+                  <h2 className="text-sm font-bold flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                    <ShieldAlert className="w-4 h-4 shrink-0 text-red-500" />
+                    <span>
+                      GRN &amp; Inward Discrepancy (DN) Products — Price Decreased &amp; Net Payment ({grnDnList.length})
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    When products are marked with a Discrepancy Note (DN) during GRN Inward, their quantities and prices are automatically decreased here, reflecting the accepted GRN stock and adjusted net payment.
+                  </p>
+                </div>
+              </div>
+
+              {grnDnList.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500">
+                  No products currently have DN discrepancies in GRN &amp; Inward. When a product is marked with a DN during Inward or GRN update, it will automatically appear here with the decreased price, accepted GRN, and adjusted payment.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-2.5 px-4 whitespace-nowrap">GRN Number &amp; Date</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">PO Number &amp; Date</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">Facility / Warehouse</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">Discrepancy Product (SKU | Name)</th>
+                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Quantity (Shipped ➔ DN ➔ Accepted)</th>
+                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Price Decreased &amp; Net Payment</th>
+                        <th className="py-2.5 px-4 whitespace-nowrap">DN Remarks / Reason</th>
+                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {grnDnList.map((po) => {
+                        const dnQty = po.dnQty || 0;
+                        const acceptedQty = typeof po.acceptedQty === 'number' ? po.acceptedQty : Math.max(0, po.totalQty - dnQty);
+                        const paymentInfo = calculatePaymentDetails(po);
+                        const matchingDn = dnRecords.find((d) =>
+                          d.parentPoDetails.toLowerCase().includes(po.poNumber.toLowerCase()) ||
+                          d.dnNumber.toLowerCase().includes(po.grnNumber.toLowerCase())
+                        );
+
+                        return (
+                          <tr
+                            key={po.id}
+                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          >
+                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <div className="font-bold text-emerald-600 dark:text-emerald-400">
+                                {po.grnNumber || 'GRN-INWARD'}
+                              </div>
+                              <div className="text-[11px] text-slate-500">{po.grnDate || po.shipDate || '-'}</div>
+                            </td>
+                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <div className="font-bold text-orange-600 dark:text-orange-400">
+                                {po.poNumber}
+                              </div>
+                              <div className="text-[11px] text-slate-500">Order: {po.orderDate}</div>
+                            </td>
+                            <td className="py-2.5 px-4 font-medium whitespace-nowrap">
+                              {po.warehouseName}
+                            </td>
+                            <td className="py-2.5 px-4 min-w-[200px]">
+                              <div className="font-mono text-[11px] text-orange-600 dark:text-orange-400 font-semibold">
+                                {po.itemId}
+                              </div>
+                              <div className="font-medium truncate max-w-[220px]">{po.itemName}</div>
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono whitespace-nowrap">
+                              <div className="font-bold text-emerald-600 dark:text-emerald-400 text-xs">
+                                {acceptedQty} Accepted in GRN
+                              </div>
+                              <div className="text-[11px] text-red-500 font-bold">
+                                -{dnQty} pcs DN / Shortage
+                              </div>
+                              <div className="text-[10px] text-slate-400">
+                                ({po.totalQty} Total Shipped)
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono whitespace-nowrap">
+                              <div className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">
+                                {formatINR(paymentInfo.totalAmount)} Net Payment
+                              </div>
+                              <div className="text-[11px] text-red-500 font-bold">
+                                -{formatINR(po.dnAmount || 0)} Decreased
+                              </div>
+                              <div className="text-[10px] text-slate-400 line-through">
+                                {formatINR(po.originalAmount || (paymentInfo.totalAmount + (po.dnAmount || 0)))}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-4 max-w-[220px]">
+                              <div className="truncate text-xs font-medium" title={po.grnDnSummary}>
+                                {po.grnDnSummary || 'Discrepancy noted during inward'}
+                              </div>
+                              <div className="mt-0.5">
+                                <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                                  DN Price Deducted
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveTab('PAYMENTS');
+                                    setSearchQuery(po.poNumber);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-600/20 text-xs font-semibold cursor-pointer border border-emerald-500/20"
+                                >
+                                  View Payment &rarr;
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (matchingDn) {
+                                      setEditingDn(matchingDn);
+                                      setPrefillDnFromPo(null);
+                                    } else {
+                                      setEditingDn(null);
+                                      setPrefillDnFromPo(po);
+                                    }
+                                    setIsDnModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold cursor-pointer"
+                                >
+                                  {matchingDn ? 'Edit DN' : '+ DN Report'}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Automatic In-Transit Products Feed in DN Tab */}
             <div
               className={`rounded-xl border overflow-hidden ${
                 darkMode

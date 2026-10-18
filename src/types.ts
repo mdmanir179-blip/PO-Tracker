@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp, FieldValue } from 'firebase/firestore';
 
 export type ThemeMode = 'light' | 'grey' | 'dark';
 
@@ -89,6 +89,10 @@ export interface PurchaseOrder {
   rtoRemarks?: string;
   // Financials & Payment Tracking Fields
   totalAmount?: number;
+  originalAmount?: number;
+  dnQty?: number;
+  dnAmount?: number;
+  acceptedQty?: number;
   paidAmount?: number;
   paymentStatus?: PaymentStatus;
   paymentDueDate?: string;
@@ -102,8 +106,8 @@ export interface PurchaseOrder {
   updatedByUid: string;
   updatedByName: string;
   updatedByEmpId: string;
-  createdAt?: Timestamp | Date | string;
-  updatedAt?: Timestamp | Date | string;
+  createdAt?: Timestamp | Date | string | FieldValue;
+  updatedAt?: Timestamp | Date | string | FieldValue;
 }
 
 export type PaymentStatus = 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE' | 'CANCELLED';
@@ -117,7 +121,7 @@ export interface PaymentTransaction {
   notes?: string;
   recordedByUid?: string;
   recordedByName?: string;
-  createdAt?: Timestamp | Date | string;
+  createdAt?: Timestamp | Date | string | FieldValue;
 }
 
 export interface DnRecord {
@@ -141,8 +145,8 @@ export interface DnRecord {
   updatedByUid: string;
   updatedByName: string;
   updatedByEmpId: string;
-  createdAt?: Timestamp | Date | string;
-  updatedAt?: Timestamp | Date | string;
+  createdAt?: Timestamp | Date | string | FieldValue;
+  updatedAt?: Timestamp | Date | string | FieldValue;
 }
 
 export interface PocContact {

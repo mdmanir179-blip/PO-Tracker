@@ -302,6 +302,22 @@
           "type": "number",
           "description": "Total PO Invoiced / Billing Amount in INR"
         },
+        "originalAmount": {
+          "type": "number",
+          "description": "Original PO / Invoice Amount in INR prior to DN deduction"
+        },
+        "dnQty": {
+          "type": "number",
+          "description": "Total quantity of products with Discrepancy Note (DN)"
+        },
+        "dnAmount": {
+          "type": "number",
+          "description": "Total amount decreased / deducted due to DN in INR"
+        },
+        "acceptedQty": {
+          "type": "number",
+          "description": "Net accepted and received quantity in GRN"
+        },
         "paidAmount": {
           "type": "number",
           "description": "Total Amount Paid / Cleared in INR"

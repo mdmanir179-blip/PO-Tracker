@@ -3,6 +3,11 @@ import { parseDateOnly } from '../services/notificationService';
 
 export interface PaymentSummary {
   totalAmount: number;
+  originalAmount?: number;
+  dnAmount?: number;
+  dnQty?: number;
+  acceptedQty?: number;
+  hasDnDeduction: boolean;
   paidAmount: number;
   dueAmount: number;
   isPaid: boolean;
@@ -117,25 +122,38 @@ export function calculatePaymentDetails(po: PurchaseOrder): PaymentSummary {
 
   const progressPercent = totalAmount > 0 ? Math.min(100, Math.round((paidAmount / totalAmount) * 100)) : (isPaid ? 100 : 0);
 
-  return {
-    totalAmount,
-    paidAmount,
-    dueAmount,
-    isPaid,
-    isPartial,
-    isOverdue,
-    isPending,
-    effectiveStatus,
-    statusLabel,
-    progressPercent,
-    daysElapsed,
-    overdueDays,
-    dueDate: finalDueDate,
-    grnDate: effectiveGrnDateStr,
-    hasGrn,
-    hasExplicitAmount,
-  };
-}
+    const hasDnDeduction = Boolean(po.hasDn && typeof po.dnAmount === 'number' && po.dnAmount > 0);
+    const dnAmount = hasDnDeduction ? po.dnAmount! : 0;
+    const originalAmount = typeof po.originalAmount === 'number' && po.originalAmount > 0
+      ? po.originalAmount
+      : (hasDnDeduction ? totalAmount + dnAmount : totalAmount);
+    const dnQty = po.dnQty || 0;
+    const acceptedQty = typeof po.acceptedQty === 'number' ? po.acceptedQty : Math.max(0, po.totalQty - dnQty);
+
+    return {
+      totalAmount,
+      originalAmount,
+      dnAmount,
+      dnQty,
+      acceptedQty,
+      hasDnDeduction,
+      paidAmount,
+      dueAmount,
+      isPaid,
+      isPartial,
+      isOverdue,
+      isPending,
+      effectiveStatus,
+      statusLabel,
+      progressPercent,
+      daysElapsed,
+      overdueDays,
+      dueDate: finalDueDate,
+      grnDate: effectiveGrnDateStr,
+      hasGrn,
+      hasExplicitAmount,
+    };
+  }
 
 /**
  * Filter and compute payment totals across an array of POs

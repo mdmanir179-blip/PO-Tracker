@@ -80,7 +80,7 @@ service cloud.firestore {
           'grnDnSummary', 'hasDn',
           'isRto', 'rtoPickedStatus', 'rtoTrackingId', 'rtoCourierPartner',
           'rtoPickDate', 'rtoReceivedAtWh', 'rtoReason', 'rtoRemarks',
-          'totalAmount', 'paidAmount', 'paymentStatus', 'paymentDueDate',
+          'totalAmount', 'originalAmount', 'dnQty', 'dnAmount', 'acceptedQty', 'paidAmount', 'paymentStatus', 'paymentDueDate',
           'paymentHistory', 'paymentNotes', 'lastPaymentDate',
           'orgScope',
           'createdByUid', 'createdByName', 'createdByEmpId',

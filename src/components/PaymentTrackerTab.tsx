@@ -648,7 +648,7 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
                           {po.warehouseName}
                         </div>
                         <div className="text-[11px] text-slate-400 truncate max-w-[160px]">
-                          {po.itemName} ({po.totalQty} units)
+                          {po.itemName} ({details.acceptedQty ?? po.totalQty} accepted{po.hasDn && (po.dnQty || 0) > 0 ? `, -${po.dnQty} DN` : ''})
                         </div>
                       </td>
 
@@ -668,11 +668,20 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
                             <Edit3 className="w-3 h-3" />
                           </button>
                         </div>
-                        {!details.hasExplicitAmount && (
+                        {details.hasDnDeduction ? (
+                          <div className="mt-1 space-y-0.5">
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                              DN: -{formatINR(details.dnAmount || 0)}
+                            </span>
+                            <div className="text-[10px] text-slate-400 font-normal">
+                              Orig: {formatINR(details.originalAmount || 0)}
+                            </div>
+                          </div>
+                        ) : !details.hasExplicitAmount ? (
                           <span className="text-[9px] font-normal text-amber-500 uppercase tracking-wide block">
                             (Estimated by Qty)
                           </span>
-                        )}
+                        ) : null}
                       </td>
 
                       {/* Paid Amount & Progress Bar */}
