@@ -65,10 +65,10 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
   return (
     <>
-      {/* Fixed Bottom Navigation Bar on Mobile / Tablet / Standard Laptops (< 2xl) */}
+      {/* Fixed Bottom Navigation Bar on Mobile Only (< md) */}
       <nav
         aria-label="Mobile Navigation"
-        className={`fixed bottom-0 left-0 right-0 z-50 2xl:hidden border-t-2 border-orange-500/30 px-1 sm:px-3 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-colors shadow-[0_-4px_25px_rgba(0,0,0,0.3)] ${
+        className={`fixed bottom-0 left-0 right-0 z-50 md:hidden border-t-2 border-orange-500/30 px-1 sm:px-3 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-colors shadow-[0_-4px_25px_rgba(0,0,0,0.3)] ${
           darkMode
             ? 'bg-slate-900 border-slate-800 text-slate-200'
             : isGrey
@@ -242,10 +242,10 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
         </div>
       </nav>
 
-      {/* Mobile "More" Bottom Sheet Drawer */}
+      {/* Mobile "More" Bottom Sheet Drawer (< md) */}
       {isMoreOpen && (
         <div
-          className="fixed inset-0 z-[60] 2xl:hidden bg-black/60 backdrop-blur-xs flex flex-col justify-end"
+          className="fixed inset-0 z-[60] md:hidden bg-black/60 backdrop-blur-xs flex flex-col justify-end"
           onClick={() => setMoreOpen(false)}
         >
           <div

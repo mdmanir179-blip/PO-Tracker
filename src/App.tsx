@@ -2408,11 +2408,11 @@ export default function App() {
       >
         {/* Zone 1: Brand Logo & Title + Mobile Menu Bar Toggle */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Mobile Top Menu Bar Button (Visible on mobile/tablet) */}
+          {/* Mobile Top Menu Bar Button (Visible on mobile only: < md) */}
           <button
             type="button"
             onClick={() => setIsMobileDrawerOpen(true)}
-            className="2xl:hidden px-2.5 py-1.5 rounded-lg border border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold shadow-xs active:scale-95"
+            className="md:hidden px-2.5 py-1.5 rounded-lg border border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold shadow-xs active:scale-95"
             title="Open Mobile Navigation Menu"
           >
             <Menu className="w-4 h-4" />
@@ -2427,7 +2427,7 @@ export default function App() {
         </div>
 
         {/* Zone 2: Desktop Full-Screen Navigation Links */}
-        <nav className="hidden 2xl:flex items-center gap-3 text-xs font-semibold">
+        <nav className="hidden xl:flex items-center gap-2 2xl:gap-3 text-xs font-semibold">
           {navTabs.map((t) => (
             <button
               key={t.id}
@@ -2660,8 +2660,8 @@ export default function App() {
           </span>
         </div>
 
-        {/* Responsive Tab Strip (Visible on Mobile, Tablet & Standard Laptops) */}
-        <div className="flex 2xl:hidden items-center gap-1.5 overflow-x-auto pb-1 xl:pb-0 no-scrollbar">
+        {/* Responsive Tab Strip (Visible on Screens where top bar nav wraps: < xl) */}
+        <div className="flex xl:hidden items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
           {navTabs.map((t) => (
             <button
               key={t.id}
@@ -2682,7 +2682,7 @@ export default function App() {
       </div>
 
       {/* Main Content Container: Full Screen Width on Desktop (`w-full max-w-none`), Responsive Padding on Mobile */}
-      <main className="flex-1 w-full max-w-none px-3 sm:px-5 lg:px-6 py-4 sm:py-5 pb-24 lg:pb-6 space-y-5 overflow-x-hidden">
+      <main className="flex-1 w-full max-w-none px-3 sm:px-5 lg:px-6 py-4 sm:py-5 pb-24 md:pb-6 space-y-5 overflow-x-hidden">
         {/* Summary Metrics Bar (Responsive 1 -> 2 -> 5 Columns) */}
         <div
           className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 p-3.5 sm:p-4 rounded-xl border ${
