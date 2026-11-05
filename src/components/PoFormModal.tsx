@@ -234,9 +234,9 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
     };
   };
 
-  const handleChange = (
-    field: keyof PoFormValues,
-    val: string | number
+  const handleChange = <K extends keyof PoFormValues>(
+    field: K,
+    val: PoFormValues[K]
   ) => {
     setValues((prev) => ({ ...prev, [field]: val }));
   };

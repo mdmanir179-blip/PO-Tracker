@@ -90,6 +90,9 @@ import {
 import { ProductCatalogModal } from './components/ProductCatalogModal';
 import { NotificationCenter } from './components/NotificationCenter';
 import { BrandLogo } from './components/BrandLogo';
+import { RtoModal } from './components/RtoModal';
+import { RtoTrackerTab } from './components/RtoTrackerTab';
+import { MobileBottomNav } from './components/MobileBottomNav';
 import { PWAInstallButton, FloatingInstallBanner } from './components/PWAInstallButton';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { calculatePaymentDetails, computePaymentLedgerMetrics, formatINR } from './utils/paymentUtils';
@@ -2044,6 +2047,31 @@ export default function App() {
     }
   };
 
+  // Revert PO from RTO status back to In Transit
+  const handleRevertFromRto = async (po: PurchaseOrder) => {
+    if (!firebaseUser || !employeeProfile) return;
+    const poRef = doc(db, 'purchase_orders', po.id);
+    try {
+      await updateDoc(poRef, {
+        isRto: false,
+        status: po.pickupStatus === 'YES' ? 'In Transit' : 'Scheduled',
+        rtoPickedStatus: 'NO',
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        `Reverted PO from RTO → In Transit`,
+        'RTO_TRACKER',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) removed PO ${po.poNumber} from RTO and restored normal tracking.`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
   // Admin delete PO with confirmation dialog
   const requestDeletePo = (po: PurchaseOrder) => {
     setConfirmState({
@@ -2641,7 +2669,7 @@ export default function App() {
       </div>
 
       {/* Main Content Container: Full Screen Width on Desktop (`w-full max-w-none`), Responsive Padding on Mobile */}
-      <main className="flex-1 w-full max-w-none px-3 sm:px-5 lg:px-6 py-4 sm:py-5 space-y-5 overflow-x-hidden">
+      <main className="flex-1 w-full max-w-none px-3 sm:px-5 lg:px-6 py-4 sm:py-5 pb-24 lg:pb-6 space-y-5 overflow-x-hidden">
         {/* Summary Metrics Bar (Responsive 1 -> 2 -> 5 Columns) */}
         <div
           className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 p-3.5 sm:p-4 rounded-xl border ${
@@ -3077,6 +3105,75 @@ export default function App() {
                   <Download className="w-3.5 h-3.5" />
                   <span>CSV</span>
                 </button>
+              </>
+            )}
+
+            {activeTab === 'RTO_TRACKER' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => exportPoListToExcel(rtoList, 'RTO_Shipments')}
+                  className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                    darkMode
+                      ? 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Excel (.xlsx)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportPoListToPdf(rtoList, 'RTO Management Shipments')}
+                  className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                    darkMode
+                      ? 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5 text-red-500" />
+                  <span>PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportPoListToCsv(rtoList, 'RTO_Shipments')}
+                  className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                    darkMode
+                      ? 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>CSV</span>
+                </button>
+                {(canUserEditPo || canUserManageLogistics || isAdmin || isBackoffice) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const firstEligible = purchaseOrders.find(
+                        (p) =>
+                          !p.isRto &&
+                          (p.status || '').toUpperCase() !== 'RTO' &&
+                          !(p.status || '').toUpperCase().startsWith('RTO')
+                      );
+                      if (firstEligible) {
+                        openRtoModalForPo({
+                          ...firstEligible,
+                          isRto: true,
+                          status: 'RTO',
+                          rtoPickedStatus: 'PENDING',
+                          rtoReason: 'Appointment Rejected / Gate Entry Denied',
+                        });
+                      } else if (purchaseOrders[0]) {
+                        openRtoModalForPo(purchaseOrders[0]);
+                      }
+                    }}
+                    className="px-3.5 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>+ Initiate RTO</span>
+                  </button>
+                )}
               </>
             )}
 
@@ -3889,6 +3986,17 @@ export default function App() {
                                     <span>+ DN Note</span>
                                   </button>
                                 )}
+                                {canUserManageLogistics && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openRtoModalForPo(po)}
+                                    className="px-2.5 py-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer hover:bg-rose-500/20"
+                                    title="Route to RTO (Return to Origin)"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                    <span>RTO</span>
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -4392,6 +4500,15 @@ export default function App() {
                                   <Edit3 className="w-3.5 h-3.5" />
                                   <span>Edit All Fields</span>
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openRtoModalForPo(po)}
+                                  className="px-2.5 py-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer hover:bg-rose-500/20"
+                                  title="Flag shipment for RTO (Return to Origin)"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>RTO</span>
+                                </button>
                                 {(isAdmin || isBackoffice) && (
                                   <button
                                     type="button"
@@ -4418,6 +4535,27 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+
+        {/* TAB: RTO & REVERSE LOGISTICS MANAGEMENT */}
+        {activeTab === 'RTO_TRACKER' && (
+          <RtoTrackerTab
+            rtoList={rtoList}
+            allPurchaseOrders={purchaseOrders}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onOpenRtoModal={openRtoModalForPo}
+            onQuickTogglePicked={handleQuickToggleRtoPicked}
+            onQuickToggleWhReceived={handleQuickToggleRtoWhReceived}
+            onRevertFromRto={handleRevertFromRto}
+            onEditPo={(po) => {
+              setEditingPo(po);
+              setIsPoModalOpen(true);
+            }}
+            darkMode={darkMode}
+            isGrey={isGrey}
+            userRole={employeeProfile.role}
+          />
         )}
 
         {/* TAB 3: GRN & INWARD */}
@@ -5871,6 +6009,38 @@ export default function App() {
         onToggleSound={toggleSound}
         hasBrowserNotificationPermission={hasBrowserNotificationPermission}
         onRequestBrowserNotification={handleRequestBrowserNotification}
+      />
+
+      {/* RTO Reverse Logistics Modal */}
+      <RtoModal
+        isOpen={isRtoModalOpen}
+        onClose={() => {
+          setIsRtoModalOpen(false);
+          setRtoTargetPo(null);
+        }}
+        onSave={handleSaveRtoDetails}
+        po={rtoTargetPo}
+        form={rtoForm}
+        onChange={(updates) => setRtoForm((prev) => ({ ...prev, ...updates }))}
+        darkMode={darkMode}
+        isGrey={isGrey}
+      />
+
+      {/* Dedicated Mobile Bottom Navigation Menu with New PO, Logistics, Printing, GRN, RTO */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        onSelectTab={(tab) => setActiveTab(tab)}
+        onNewPo={() => {
+          setEditingPo(null);
+          setIsPoModalOpen(true);
+          setActiveTab('PO_ENTRY');
+        }}
+        purchaseOrders={purchaseOrders}
+        rtoCount={rtoList.length}
+        grnCount={grnList.length}
+        logisticsAlertCount={logisticsTodaySignalPos.length}
+        darkMode={darkMode}
+        isGrey={isGrey}
       />
 
       {/* Floating Install Prompt Banner for Mobile & Computer Users */}
