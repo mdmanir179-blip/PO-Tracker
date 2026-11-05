@@ -2366,8 +2366,8 @@ export default function App() {
     },
     {
       id: 'DN_TRACKER',
-      label: `04. DN Tracker (${dnRecords.length})`,
-      shortLabel: `DN (${dnRecords.length})`,
+      label: `04. DN Tracker (${grnDnList.length})`,
+      shortLabel: `DN (${grnDnList.length})`,
     },
     {
       id: 'POC_DIRECTORY',
@@ -2844,46 +2844,6 @@ export default function App() {
           </div>
         )}
 
-        {expiredNotifications.length > 0 && (
-          <div className="p-3 sm:p-4 rounded-xl border border-red-500/40 bg-red-500/10 text-red-900 dark:text-red-200 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-red-600 text-white shrink-0 mt-0.5 animate-pulse">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-extrabold text-[11px] uppercase px-2 py-0.5 rounded bg-red-500/20 text-red-800 dark:text-red-300">
-                    PO DATE EXPIRED NOTIFICATION
-                  </span>
-                  <span className="text-xs font-bold font-mono">
-                    {expiredNotifications.length} Overdue Purchase Order(s)
-                  </span>
-                </div>
-                <p className="text-xs text-red-800/90 dark:text-red-200/90 mt-1">
-                  PO Expiry date has passed for (
-                  {expiredNotifications
-                    .slice(0, 3)
-                    .map((n) => `${n.poNumber} (${n.warehouseName})`)
-                    .join(', ')}
-                  {expiredNotifications.length > 3
-                    ? ` + ${expiredNotifications.length - 3} more`
-                    : ''}
-                  ). Action required: Request PO date extension, expedite inwarding, or re-route.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsNotificationOpen(true)}
-                className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
-              >
-                <span>Review Expired POs</span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* High-Visibility Payment Overdue Banner (> 30 Days) */}
         {paymentOverdueNotifications.length > 0 && (
@@ -3235,7 +3195,9 @@ export default function App() {
               <>
                 <button
                   type="button"
-                  onClick={() => exportDnListToExcel(filteredDnList)}
+                  onClick={() =>
+                    exportPoListToExcel(grnDnList, 'DN_GRN_Discrepancies')
+                  }
                   className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
                     darkMode
                       ? 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
@@ -3247,7 +3209,9 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => exportDnListToPdf(filteredDnList)}
+                  onClick={() =>
+                    exportPoListToPdf(grnDnList, 'DN_GRN_Discrepancies')
+                  }
                   className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
                     darkMode
                       ? 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
@@ -3259,7 +3223,9 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => exportDnListToCsv(filteredDnList)}
+                  onClick={() =>
+                    exportPoListToCsv(grnDnList, 'DN_GRN_Discrepancies')
+                  }
                   className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
                     darkMode
                       ? 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800'
@@ -3269,20 +3235,6 @@ export default function App() {
                   <Download className="w-3.5 h-3.5" />
                   <span>CSV</span>
                 </button>
-                {canUserManageDn && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingDn(null);
-                      setPrefillDnFromPo(null);
-                      setIsDnModalOpen(true);
-                    }}
-                    className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>+ Add DN Tracker Entry</span>
-                  </button>
-                )}
               </>
             )}
 
@@ -4950,280 +4902,6 @@ export default function App() {
               )}
             </div>
 
-            {/* 2. Automatic In-Transit Products Feed in DN Tab */}
-            <div
-              className={`rounded-xl border overflow-hidden ${
-                darkMode
-                  ? 'bg-slate-900 border-slate-800'
-                  : isGrey
-                  ? 'bg-zinc-100 border-zinc-300'
-                  : 'bg-white border-slate-200'
-              }`}
-            >
-              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-bold flex items-center gap-2 text-amber-600 dark:text-amber-400">
-                    <Truck className="w-4 h-4 shrink-0" />
-                    <span>
-                      In-Transit Products Automatically Synced to DN ({inTransitList.length})
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Every product currently in the In-Transit tab automatically appears here so Backoffice, Logistics, and Warehouse teams can generate a DN Note in one click with all SKU, PO, and LR details pre-filled.
-                  </p>
-                </div>
-              </div>
-
-              {inTransitList.length === 0 ? (
-                <div className="p-6 text-center text-xs text-slate-500">
-                  No products are currently in In-Transit. Any product moved to In-Transit will automatically show here.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr
-                        className={`border-b font-semibold ${
-                          darkMode
-                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                            : 'bg-slate-50 border-slate-200 text-slate-600'
-                        }`}
-                      >
-                        <th className="py-2.5 px-4 whitespace-nowrap">PO Number & Order Date</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">Facility / Warehouse</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">In-Transit Product (SKU | Item Name)</th>
-                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Shipped Qty</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">Invoice & ASN</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">Logistics & LR / Tracking ID</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">DN Status</th>
-                        <th className="py-2.5 px-4 text-right whitespace-nowrap">
-                          Quick DN Note Action
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {inTransitList.map((po) => {
-                        const matchingDn = dnRecords.find((d) =>
-                          d.parentPoDetails.toLowerCase().includes(po.poNumber.toLowerCase())
-                        );
-                        return (
-                          <tr
-                            key={po.id}
-                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
-                          >
-                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
-                              <div className="font-bold text-amber-600 dark:text-amber-400">
-                                {po.poNumber}
-                              </div>
-                              <div className="text-[11px] text-slate-500">{po.orderDate}</div>
-                            </td>
-                            <td className="py-2.5 px-4 font-medium whitespace-nowrap">
-                              {po.warehouseName}
-                            </td>
-                            <td className="py-2.5 px-4 min-w-[220px]">
-                              <div className="font-mono text-[11px] text-orange-600 dark:text-orange-400 font-semibold">
-                                {po.itemId}
-                              </div>
-                              <div className="font-medium">{po.itemName}</div>
-                            </td>
-                            <td className="py-2.5 px-4 text-right font-mono font-bold tabular-nums">
-                              {po.totalQty}
-                            </td>
-                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
-                              <div>Inv: {po.invoiceNo || '-'}</div>
-                              <div className="text-[11px] text-slate-500">ASN: {po.asn || '-'}</div>
-                            </td>
-                            <td className="py-2.5 px-4 whitespace-nowrap">
-                              <div className="font-medium">{po.logisticsPortal || '-'}</div>
-                              <div className="font-mono text-[11px] text-slate-500">
-                                LR: {po.pickupTrackingId || '-'}
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-4 whitespace-nowrap">
-                              {matchingDn ? (
-                                <span className="px-2 py-0.5 rounded bg-orange-500/15 text-orange-600 dark:text-orange-400 font-bold text-[11px] font-mono">
-                                  DN Logged: {matchingDn.dnNumber} (Qty: {matchingDn.dnQty})
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold text-[11px]">
-                                  In Transit · Ready for DN
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-4 text-right whitespace-nowrap">
-                              {canUserManageDn ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (matchingDn) {
-                                      setEditingDn(matchingDn);
-                                      setPrefillDnFromPo(null);
-                                    } else {
-                                      setEditingDn(null);
-                                      setPrefillDnFromPo(po);
-                                    }
-                                    setIsDnModalOpen(true);
-                                  }}
-                                  className="px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>
-                                    {matchingDn ? 'Update DN Note' : '+ Create DN from Product'}
-                                  </span>
-                                </button>
-                              ) : (
-                                <span className="text-slate-400 text-xs">Read-Only</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            {/* Official Logged DN Tracker Table */}
-            <div
-              className={`rounded-xl border overflow-hidden ${
-                darkMode
-                  ? 'bg-slate-900 border-slate-800'
-                  : isGrey
-                  ? 'bg-zinc-100 border-zinc-300'
-                  : 'bg-white border-slate-200'
-              }`}
-            >
-              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-bold">
-                    04. Instamart DN Tracker — Logged Discrepancy Notes ({filteredDnList.length})
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    DN Date · DN Number · Facility Name · Parent PO Details · DN SKU ID | Item Name · DN QTY · WH POC Name / Contact · LR No
-                  </p>
-                </div>
-              </div>
-
-              {filteredDnList.length === 0 ? (
-                <div className="p-10 sm:p-12 text-center space-y-3">
-                  <div className="text-sm font-semibold">No Discrepancy Notes Logged Yet</div>
-                  <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    Click "+ Create DN from Product" on any In-Transit product above or click below to log a DN manually.
-                  </p>
-                  {canUserManageDn && (
-                    <div className="flex items-center justify-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingDn(null);
-                          setPrefillDnFromPo(null);
-                          setIsDnModalOpen(true);
-                        }}
-                        className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-4 h-4" />
-                        <span>Create First DN Tracker Entry</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr
-                        className={`border-b font-semibold ${
-                          darkMode
-                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                            : 'bg-slate-50 border-slate-200 text-slate-600'
-                        }`}
-                      >
-                        <th className="py-3 px-4 whitespace-nowrap">DN Date</th>
-                        <th className="py-3 px-4 whitespace-nowrap">DN Number</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Facility Name</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Parent PO Details</th>
-                        <th className="py-3 px-4 whitespace-nowrap">DN SKU ID | Item Name</th>
-                        <th className="py-3 px-4 text-right whitespace-nowrap">DN QTY</th>
-                        <th className="py-3 px-4 whitespace-nowrap">WH POC Name / Contact Details</th>
-                        <th className="py-3 px-4 whitespace-nowrap">LR No</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Updated By (Team Member)</th>
-                        <th className="py-3 px-4 text-right whitespace-nowrap">Edit / Update</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {filteredDnList.map((dn) => (
-                        <tr
-                          key={dn.id}
-                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
-                        >
-                          <td className="py-3 px-4 font-mono whitespace-nowrap">
-                            {dn.dnDate}
-                          </td>
-                          <td className="py-3 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
-                            {dn.dnNumber}
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap font-medium">
-                            {dn.facilityName}
-                          </td>
-                          <td className="py-3 px-4 font-mono whitespace-nowrap">
-                            {dn.parentPoDetails}
-                          </td>
-                          <td className="py-3 px-4 min-w-[220px] font-medium">
-                            {dn.dnSkuIdItemName}
-                          </td>
-                          <td className="py-3 px-4 text-right font-mono font-bold tabular-nums text-red-600 dark:text-red-400">
-                            {dn.dnQty}
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            {dn.whPocDetails}
-                          </td>
-                          <td className="py-3 px-4 font-mono whitespace-nowrap font-semibold">
-                            {dn.lrNo}
-                          </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            <div className="font-semibold">{dn.updatedByName}</div>
-                            <div className="font-mono text-[11px] text-slate-500">
-                              ID: {dn.updatedByEmpId}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-right whitespace-nowrap">
-                            <div className="inline-flex items-center gap-1.5">
-                              {canUserManageDn ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingDn(dn);
-                                    setPrefillDnFromPo(null);
-                                    setIsDnModalOpen(true);
-                                  }}
-                                  className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-                                >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                  <span>Update DN</span>
-                                </button>
-                              ) : (
-                                <span className="text-slate-400 text-xs">Read-Only</span>
-                              )}
-                              {isAdmin && (
-                                <button
-                                  type="button"
-                                  onClick={() => requestDeleteDn(dn)}
-                                  className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
-                                  title="Admin Delete DN"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
           </div>
         )}
 

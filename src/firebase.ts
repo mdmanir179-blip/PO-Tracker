@@ -107,9 +107,14 @@ async function testConnection() {
     if (db) {
       await getDocFromServer(doc(db, 'test', 'connection'));
     }
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firebase connection check: client is offline or network connecting.');
+  } catch (error: any) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (
+      msg.includes('the client is offline') ||
+      msg.includes('aborted') ||
+      msg.includes('signal is aborted')
+    ) {
+      console.warn('Firebase connection probe notice (normal):', msg);
     }
   }
 }
