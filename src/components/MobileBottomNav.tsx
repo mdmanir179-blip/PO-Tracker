@@ -56,7 +56,24 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   };
 
   const poEntryCount = purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length;
-  const inTransitCount = purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT').length;
+  const inTransitCount = purchaseOrders.filter((po) => {
+    const isRto =
+      po.isRto === true ||
+      po.workflowStage === 'RTO' ||
+      (po.status || '').toUpperCase() === 'RTO' ||
+      (po.status || '').toUpperCase().startsWith('RTO');
+    const isGrn =
+      po.workflowStage === 'GRN' ||
+      po.inwardStatus === 'SUCCESS' ||
+      Boolean(po.grnNumber && po.grnNumber.trim()) ||
+      (po.status || '').toUpperCase().includes('GRN');
+    return (
+      (po.workflowStage === 'IN_TRANSIT' ||
+        (po.pickupStatus === 'YES' && po.workflowStage !== 'PO_ENTRY')) &&
+      !isRto &&
+      !isGrn
+    );
+  }).length;
 
   const handleTabClick = (tab: ActiveTab) => {
     onSelectTab(tab);

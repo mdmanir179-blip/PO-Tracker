@@ -1091,12 +1091,23 @@ export default function App() {
       }
     }
 
-    const newStage =
-      values.pickupStatus === 'YES'
-        ? 'IN_TRANSIT'
-        : editingPo?.workflowStage === 'GRN'
-        ? 'GRN'
-        : 'PO_ENTRY';
+    const isAlreadyGrn =
+      editingPo?.workflowStage === 'GRN' ||
+      editingPo?.inwardStatus === 'SUCCESS' ||
+      Boolean(editingPo?.grnNumber) ||
+      (values.status || '').toUpperCase().includes('GRN');
+    const isAlreadyRto =
+      editingPo?.workflowStage === 'RTO' ||
+      editingPo?.isRto === true ||
+      (values.status || '').toUpperCase().startsWith('RTO');
+
+    const newStage: PurchaseOrder['workflowStage'] = isAlreadyGrn
+      ? 'GRN'
+      : isAlreadyRto
+      ? 'RTO'
+      : values.pickupStatus === 'YES'
+      ? 'IN_TRANSIT'
+      : 'PO_ENTRY';
 
     if (editingPo) {
       const poRef = doc(db, 'purchase_orders', editingPo.id);
@@ -1775,10 +1786,11 @@ export default function App() {
         updatedAt: serverTimestamp(),
       };
 
-      if (isTransitionFromTransit) {
-        updatePayload.workflowStage = 'GRN';
-        updatePayload.inwardStatus = 'SUCCESS';
-      } else {
+      // Always mark as GRN workflow stage and clear RTO flag
+      updatePayload.workflowStage = 'GRN';
+      updatePayload.inwardStatus = 'SUCCESS';
+      updatePayload.isRto = false;
+      if (!isTransitionFromTransit) {
         updatePayload.comment = grnTargetPo.comment;
       }
 
@@ -1927,30 +1939,60 @@ export default function App() {
   // Logistics & Backoffice: Change PO status while in In-Transit (In Transit, Out for Delivered, RTO, WFA, Re-Attempt Scheduled, etc.)
   const handleChangeInTransitStatus = async (po: PurchaseOrder, newStatus: string) => {
     if (!firebaseUser || !employeeProfile) return;
-    const isNowRto = newStatus.toUpperCase() === 'RTO' || newStatus.toUpperCase().startsWith('RTO');
+    const isNowRto =
+      newStatus.toUpperCase() === 'RTO' ||
+      newStatus.toUpperCase().startsWith('RTO') ||
+      newStatus.toUpperCase().includes('RETURN TO ORIGIN');
+    const isNowGrn =
+      newStatus.toUpperCase().includes('GRN') ||
+      newStatus.toUpperCase().includes('DELIVERED') ||
+      newStatus.toUpperCase().includes('INWARD DONE');
     const poRef = doc(db, 'purchase_orders', po.id);
 
     try {
-      await updateDoc(poRef, {
+      const updatePayload: Record<string, any> = {
         status: newStatus.slice(0, 60),
-        isRto: isNowRto ? true : Boolean(po.isRto),
-        rtoPickedStatus: isNowRto ? po.rtoPickedStatus || 'PENDING' : po.rtoPickedStatus || 'NO',
         updatedByUid: firebaseUser.uid,
         updatedByName: employeeProfile.employeeName.slice(0, 100),
         updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
         updatedAt: serverTimestamp(),
-      });
+      };
+
+      if (isNowRto) {
+        updatePayload.isRto = true;
+        updatePayload.workflowStage = 'RTO';
+        updatePayload.rtoPickedStatus = po.rtoPickedStatus || 'PENDING';
+      } else if (isNowGrn) {
+        updatePayload.workflowStage = 'GRN';
+        updatePayload.inwardStatus = 'SUCCESS';
+        updatePayload.isRto = false;
+        if (!po.grnDate) {
+          updatePayload.grnDate = new Date().toISOString().slice(0, 10);
+        }
+      } else {
+        updatePayload.workflowStage = 'IN_TRANSIT';
+        updatePayload.isRto = false;
+      }
+
+      await updateDoc(poRef, updatePayload);
       await recordActivity(
-        `In-Transit Status Changed → ${newStatus}`,
-        isNowRto ? 'RTO_TRACKER' : 'IN_TRANSIT',
+        isNowRto
+          ? `PO Marked RTO → Shifted from In-Transit to RTO Management`
+          : isNowGrn
+          ? `PO Marked GRN → Shifted from In-Transit to GRN & Inward`
+          : `In-Transit Status Changed → ${newStatus}`,
+        isNowRto ? 'RTO_TRACKER' : isNowGrn ? 'GRN' : 'IN_TRANSIT',
         po.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) changed In-Transit status of PO ${po.poNumber} to "${newStatus}".`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) changed In-Transit status of PO ${po.poNumber} to "${newStatus}". Order automatically shifted to ${
+          isNowRto ? 'RTO Management' : isNowGrn ? 'GRN & Inward' : 'In Transit'
+        }.`
       );
       if (isNowRto) {
         openRtoModalForPo({
           ...po,
           status: 'RTO',
           isRto: true,
+          workflowStage: 'RTO',
           rtoPickedStatus: po.rtoPickedStatus || 'PENDING',
         });
       }
@@ -1969,6 +2011,7 @@ export default function App() {
       await updateDoc(poRef, {
         status: 'RTO',
         isRto: true,
+        workflowStage: 'RTO',
         rtoPickedStatus: rtoForm.rtoPickedStatus,
         rtoTrackingId: rtoForm.rtoTrackingId.trim().slice(0, 100),
         rtoCourierPartner: rtoForm.rtoCourierPartner.trim().slice(0, 100),
@@ -1985,7 +2028,7 @@ export default function App() {
         `Updated RTO Tracking & Pickup Status (Picked: ${rtoForm.rtoPickedStatus})`,
         'RTO_TRACKER',
         rtoTargetPo.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated RTO for PO ${rtoTargetPo.poNumber} — Picked: ${rtoForm.rtoPickedStatus}, Tracking ID: ${rtoForm.rtoTrackingId || 'N/A'}, Courier: ${rtoForm.rtoCourierPartner || 'N/A'}, Received at WH: ${rtoForm.rtoReceivedAtWh}.`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated RTO for PO ${rtoTargetPo.poNumber} — Picked: ${rtoForm.rtoPickedStatus}, Tracking ID: ${rtoForm.rtoTrackingId || 'N/A'}, Courier: ${rtoForm.rtoCourierPartner || 'N/A'}, Received at WH: ${rtoForm.rtoReceivedAtWh}. Automatically shifted from In-Transit to RTO Management.`
       );
       setIsRtoModalOpen(false);
       setRtoTargetPo(null);
@@ -2004,6 +2047,7 @@ export default function App() {
     try {
       await updateDoc(poRef, {
         isRto: true,
+        workflowStage: 'RTO',
         status: 'RTO',
         rtoPickedStatus: nextPicked,
         rtoPickDate:
@@ -2056,6 +2100,7 @@ export default function App() {
     try {
       await updateDoc(poRef, {
         isRto: false,
+        workflowStage: 'IN_TRANSIT',
         status: po.pickupStatus === 'YES' ? 'In Transit' : 'Scheduled',
         rtoPickedStatus: 'NO',
         updatedByUid: firebaseUser.uid,
@@ -2067,12 +2112,13 @@ export default function App() {
         `Reverted PO from RTO → In Transit`,
         'RTO_TRACKER',
         po.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) removed PO ${po.poNumber} from RTO and restored normal tracking.`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) removed PO ${po.poNumber} from RTO and restored it back to In Transit.`
       );
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
     }
   };
+
 
   // Admin delete PO with confirmation dialog
   const requestDeletePo = (po: PurchaseOrder) => {
@@ -2147,46 +2193,95 @@ export default function App() {
 
   const inTransitList = useMemo(
     () =>
-      purchaseOrders.filter(
-        (po) =>
-          po.workflowStage === 'IN_TRANSIT' &&
-          (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.pickupTrackingId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (po.rtoTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (po.status || '').toLowerCase().includes(searchQuery.toLowerCase()))
-      ),
+      purchaseOrders.filter((po) => {
+        // Automatically exclude PO if marked as RTO
+        const isRto =
+          po.isRto === true ||
+          po.workflowStage === 'RTO' ||
+          (po.status || '').toUpperCase() === 'RTO' ||
+          (po.status || '').toUpperCase().startsWith('RTO') ||
+          (po.status || '').toUpperCase().includes('RETURN TO ORIGIN');
+        if (isRto) return false;
+
+        // Automatically exclude PO if marked as GRN / Inward Success
+        const isGrn =
+          po.workflowStage === 'GRN' ||
+          po.inwardStatus === 'SUCCESS' ||
+          Boolean(po.grnNumber && po.grnNumber.trim()) ||
+          (po.status || '').toUpperCase().includes('GRN') ||
+          (po.status || '').toUpperCase().includes('DELIVERED');
+        if (isGrn) return false;
+
+        // Must be in transit stage
+        const isInTransit =
+          po.workflowStage === 'IN_TRANSIT' ||
+          (po.pickupStatus === 'YES' && po.workflowStage !== 'PO_ENTRY');
+        if (!isInTransit) return false;
+
+        const q = searchQuery.toLowerCase();
+        return (
+          po.poNumber.toLowerCase().includes(q) ||
+          po.warehouseName.toLowerCase().includes(q) ||
+          po.itemName.toLowerCase().includes(q) ||
+          po.pickupTrackingId.toLowerCase().includes(q) ||
+          (po.status || '').toLowerCase().includes(q)
+        );
+      }),
     [purchaseOrders, searchQuery]
   );
 
   const rtoList = useMemo(
     () =>
-      purchaseOrders.filter(
-        (po) =>
-          (po.isRto === true ||
-            (po.status || '').toUpperCase() === 'RTO' ||
-            (po.status || '').toUpperCase().startsWith('RTO')) &&
-          (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.pickupTrackingId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (po.rtoTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (po.rtoReason || '').toLowerCase().includes(searchQuery.toLowerCase()))
-      ),
+      purchaseOrders.filter((po) => {
+        const isRto =
+          po.isRto === true ||
+          po.workflowStage === 'RTO' ||
+          (po.status || '').toUpperCase() === 'RTO' ||
+          (po.status || '').toUpperCase().startsWith('RTO') ||
+          (po.status || '').toUpperCase().includes('RETURN TO ORIGIN');
+        if (!isRto) return false;
+
+        const q = searchQuery.toLowerCase();
+        return (
+          po.poNumber.toLowerCase().includes(q) ||
+          po.warehouseName.toLowerCase().includes(q) ||
+          po.itemName.toLowerCase().includes(q) ||
+          po.pickupTrackingId.toLowerCase().includes(q) ||
+          (po.rtoTrackingId || '').toLowerCase().includes(q) ||
+          (po.rtoReason || '').toLowerCase().includes(q) ||
+          (po.status || '').toLowerCase().includes(q)
+        );
+      }),
     [purchaseOrders, searchQuery]
   );
 
   const grnList = useMemo(
     () =>
-      purchaseOrders.filter(
-        (po) =>
-          po.workflowStage === 'GRN' &&
-          (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.grnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.itemName.toLowerCase().includes(searchQuery.toLowerCase()))
-      ),
+      purchaseOrders.filter((po) => {
+        // Do not include RTOs in GRN
+        const isRto =
+          po.isRto === true ||
+          po.workflowStage === 'RTO' ||
+          (po.status || '').toUpperCase() === 'RTO' ||
+          (po.status || '').toUpperCase().startsWith('RTO');
+        if (isRto) return false;
+
+        const isGrn =
+          po.workflowStage === 'GRN' ||
+          po.inwardStatus === 'SUCCESS' ||
+          Boolean(po.grnNumber && po.grnNumber.trim()) ||
+          (po.status || '').toUpperCase().includes('GRN') ||
+          (po.status || '').toUpperCase().includes('DELIVERED');
+        if (!isGrn) return false;
+
+        const q = searchQuery.toLowerCase();
+        return (
+          po.poNumber.toLowerCase().includes(q) ||
+          (po.grnNumber || '').toLowerCase().includes(q) ||
+          po.warehouseName.toLowerCase().includes(q) ||
+          po.itemName.toLowerCase().includes(q)
+        );
+      }),
     [purchaseOrders, searchQuery]
   );
 
@@ -2351,8 +2446,8 @@ export default function App() {
     },
     {
       id: 'IN_TRANSIT',
-      label: `02. In Transit (${purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT').length})`,
-      shortLabel: `In Transit (${purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT').length})`,
+      label: `02. In Transit (${inTransitList.length})`,
+      shortLabel: `In Transit (${inTransitList.length})`,
     },
     {
       id: 'RTO_TRACKER',
@@ -2361,8 +2456,8 @@ export default function App() {
     },
     {
       id: 'GRN',
-      label: `03. GRN & Inward (${purchaseOrders.filter((p) => p.workflowStage === 'GRN').length})`,
-      shortLabel: `GRN (${purchaseOrders.filter((p) => p.workflowStage === 'GRN').length})`,
+      label: `03. GRN & Inward (${grnList.length})`,
+      shortLabel: `GRN (${grnList.length})`,
     },
     {
       id: 'DN_TRACKER',
@@ -4407,6 +4502,27 @@ export default function App() {
                             <div className="font-medium">{po.logisticsPortal || '-'}</div>
                             <div className="font-mono text-[11px] text-slate-500">
                               {po.pickupTrackingId || '-'}
+                            </div>
+                            <div className="mt-1">
+                              <select
+                                value={po.status || 'In Transit'}
+                                onChange={(e) => handleChangeInTransitStatus(po, e.target.value)}
+                                className={`text-[10px] font-bold rounded px-1.5 py-0.5 border cursor-pointer ${
+                                  darkMode
+                                    ? 'bg-slate-800 border-slate-700 text-slate-200'
+                                    : isGrey
+                                    ? 'bg-zinc-200 border-zinc-400 text-zinc-900'
+                                    : 'bg-slate-100 border-slate-300 text-slate-800'
+                                }`}
+                                title="Change status: selecting RTO or GRN will automatically move this shipment"
+                              >
+                                <option value="In Transit">Status: In Transit</option>
+                                <option value="Out for Delivery">Status: Out for Delivery</option>
+                                <option value="Waiting for Slot">Status: Waiting for Slot</option>
+                                <option value="Appointment Re-scheduled">Status: Re-scheduled</option>
+                                <option value="GRN Completed">Move to GRN &amp; Inward &rarr;</option>
+                                <option value="RTO">Move to RTO Management &rarr;</option>
+                              </select>
                             </div>
                           </td>
                           <td className="py-3 px-4 font-mono text-[11px] whitespace-nowrap">

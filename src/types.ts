@@ -5,7 +5,7 @@ export type ThemeMode = 'light' | 'grey' | 'dark';
 export type TeamRole = 'admin' | 'backoffice' | 'warehouse' | 'logistics' | 'print';
 
 
-export type WorkflowStage = 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN';
+export type WorkflowStage = 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN' | 'RTO';
 
 export interface EmployeePermissions {
   canEditPo: boolean;
