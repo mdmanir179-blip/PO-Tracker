@@ -71,6 +71,7 @@ export default defineConfig(() => {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),
       },
+      dedupe: ['react', 'react-dom', 'react-is'],
     },
     build: {
       chunkSizeWarningLimit: 3000,
