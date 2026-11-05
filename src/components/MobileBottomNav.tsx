@@ -28,6 +28,8 @@ interface MobileBottomNavProps {
   logisticsAlertCount: number;
   darkMode: boolean;
   isGrey: boolean;
+  isDrawerOpen?: boolean;
+  onToggleDrawer?: (open: boolean) => void;
 }
 
 export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
@@ -40,28 +42,38 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   logisticsAlertCount,
   darkMode,
   isGrey,
+  isDrawerOpen: externalDrawerOpen,
+  onToggleDrawer,
 }) => {
-  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const [internalMoreOpen, setInternalMoreOpen] = useState(false);
+  const isMoreOpen = externalDrawerOpen !== undefined ? externalDrawerOpen : internalMoreOpen;
+  const setMoreOpen = (open: boolean) => {
+    if (onToggleDrawer) {
+      onToggleDrawer(open);
+    } else {
+      setInternalMoreOpen(open);
+    }
+  };
 
   const poEntryCount = purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length;
   const inTransitCount = purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT').length;
 
   const handleTabClick = (tab: ActiveTab) => {
     onSelectTab(tab);
-    setIsMoreOpen(false);
+    setMoreOpen(false);
   };
 
   return (
     <>
-      {/* Fixed Bottom Navigation Bar on Mobile / Tablet (< lg) */}
+      {/* Fixed Bottom Navigation Bar on Mobile / Tablet / Standard Laptops (< 2xl) */}
       <nav
         aria-label="Mobile Navigation"
-        className={`fixed bottom-0 left-0 right-0 z-40 lg:hidden border-t px-1 sm:px-3 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-colors shadow-[0_-4px_25px_rgba(0,0,0,0.15)] ${
+        className={`fixed bottom-0 left-0 right-0 z-50 2xl:hidden border-t-2 border-orange-500/30 px-1 sm:px-3 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-colors shadow-[0_-4px_25px_rgba(0,0,0,0.3)] ${
           darkMode
-            ? 'bg-slate-900/95 border-slate-800 text-slate-200 backdrop-blur-md'
+            ? 'bg-slate-900 border-slate-800 text-slate-200'
             : isGrey
-            ? 'bg-zinc-100/95 border-zinc-300 text-zinc-900 backdrop-blur-md'
-            : 'bg-white/95 border-slate-200 text-slate-800 backdrop-blur-md'
+            ? 'bg-zinc-100 border-zinc-300 text-zinc-900'
+            : 'bg-white border-slate-200 text-slate-800'
         }`}
       >
         <div className="flex items-center justify-around max-w-lg mx-auto">
@@ -216,7 +228,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
           {/* 6. More Menu Drawer Button */}
           <button
             type="button"
-            onClick={() => setIsMoreOpen((prev) => !prev)}
+            onClick={() => setMoreOpen(!isMoreOpen)}
             className={`flex flex-col items-center justify-center flex-1 py-1 px-1 transition-colors cursor-pointer ${
               isMoreOpen
                 ? 'text-orange-600 dark:text-orange-400'
@@ -225,7 +237,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             title="All Navigation Tabs"
           >
             <Menu className="w-5 h-5 stroke-[1.8]" />
-            <span className="text-[10px] mt-1 font-medium">More</span>
+            <span className="text-[10px] mt-1 font-medium">Menu</span>
           </button>
         </div>
       </nav>
@@ -233,8 +245,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       {/* Mobile "More" Bottom Sheet Drawer */}
       {isMoreOpen && (
         <div
-          className="fixed inset-0 z-50 lg:hidden bg-black/60 backdrop-blur-xs flex flex-col justify-end"
-          onClick={() => setIsMoreOpen(false)}
+          className="fixed inset-0 z-[60] 2xl:hidden bg-black/60 backdrop-blur-xs flex flex-col justify-end"
+          onClick={() => setMoreOpen(false)}
         >
           <div
             className={`w-full max-h-[80vh] rounded-t-3xl border-t p-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl overflow-y-auto space-y-4 ${
@@ -254,7 +266,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setIsMoreOpen(false)}
+                onClick={() => setMoreOpen(false)}
                 className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-5 h-5" />

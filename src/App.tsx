@@ -48,6 +48,7 @@ import {
   Smartphone,
   CreditCard,
   Radio,
+  Menu,
 } from 'lucide-react';
 import {
   db,
@@ -198,6 +199,7 @@ export default function App() {
   const [editingEmployee, setEditingEmployee] = useState<EmployeeProfile | null>(null);
 
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
   // RTO Management Modal State (RTO Picked Status, Tracking ID, Courier, Pick Date, Reason, WH Received)
   const [isRtoModalOpen, setIsRtoModalOpen] = useState(false);
@@ -2404,8 +2406,19 @@ export default function App() {
             : 'bg-white border-slate-200'
         }`}
       >
-        {/* Zone 1: Brand Logo & Title */}
-        <div className="flex items-center gap-3">
+        {/* Zone 1: Brand Logo & Title + Mobile Menu Bar Toggle */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Mobile Top Menu Bar Button (Visible on mobile/tablet) */}
+          <button
+            type="button"
+            onClick={() => setIsMobileDrawerOpen(true)}
+            className="2xl:hidden px-2.5 py-1.5 rounded-lg border border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold shadow-xs active:scale-95"
+            title="Open Mobile Navigation Menu"
+          >
+            <Menu className="w-4 h-4" />
+            <span className="hidden xs:inline">Menu</span>
+          </button>
+
           <BrandLogo
             size="md"
             showSubtitle={true}
@@ -6041,6 +6054,8 @@ export default function App() {
         logisticsAlertCount={logisticsTodaySignalPos.length}
         darkMode={darkMode}
         isGrey={isGrey}
+        isDrawerOpen={isMobileDrawerOpen}
+        onToggleDrawer={setIsMobileDrawerOpen}
       />
 
       {/* Floating Install Prompt Banner for Mobile & Computer Users */}

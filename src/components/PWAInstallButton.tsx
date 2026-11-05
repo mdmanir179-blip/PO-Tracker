@@ -101,7 +101,7 @@ export const FloatingInstallBanner: React.FC<{ darkMode?: boolean }> = ({
   return (
     <>
       <div
-        className={`fixed bottom-3 left-3 right-3 sm:left-auto sm:right-4 sm:max-w-md z-40 p-3 sm:p-3.5 rounded-2xl border shadow-xl backdrop-blur-md transition-all ${
+        className={`fixed bottom-20 left-3 right-3 sm:bottom-4 sm:left-auto sm:right-4 sm:max-w-md z-40 p-3 sm:p-3.5 rounded-2xl border shadow-xl backdrop-blur-md transition-all ${
           darkMode
             ? 'bg-slate-900/95 border-slate-700 text-slate-100'
             : 'bg-white/95 border-slate-200 text-slate-900 shadow-slate-300/40'
