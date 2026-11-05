@@ -12,22 +12,94 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <script>
       (function() {
-        try {
-          var originalFetch = window.fetch ? window.fetch.bind(window) : null;
-          var currentFetch = originalFetch;
-          Object.defineProperty(window, 'fetch', {
-            get: function() {
-              return currentFetch;
-            },
-            set: function(val) {
-              currentFetch = val;
-            },
-            configurable: true,
-            enumerable: true,
-          });
-        } catch (err) {
-          // fallback
+        // 1. Universal window.fetch setter compatibility
+        function makeFetchWritable(target) {
+          if (!target) return;
+          try {
+            var currentFetch = target.fetch || (typeof window !== 'undefined' ? window.fetch : null);
+            Object.defineProperty(target, 'fetch', {
+              get: function() {
+                return currentFetch;
+              },
+              set: function(fn) {
+                currentFetch = fn;
+              },
+              configurable: true,
+              enumerable: true,
+            });
+          } catch (e) {
+            try {
+              target.fetch = target.fetch;
+            } catch (e2) {}
+          }
         }
+
+        makeFetchWritable(window);
+        if (typeof Window !== 'undefined') {
+          makeFetchWritable(Window.prototype);
+        }
+        try {
+          if (window.__proto__) {
+            makeFetchWritable(window.__proto__);
+          }
+        } catch (e) {}
+
+        // 2. Global error suppressor for external extension scripts and iframe automation
+        var originalOnError = window.onerror;
+        window.onerror = function(msg, url, line, col, err) {
+          var str = String(msg || '') + ' ' + String(url || '') + ' ' + String(err || '');
+          if (
+            str.indexOf('chrome-extension') !== -1 ||
+            str.indexOf('fetch of #<Window>') !== -1 ||
+            str.indexOf('frame_ant') !== -1 ||
+            str.indexOf('signal is aborted') !== -1
+          ) {
+            return true;
+          }
+          if (typeof originalOnError === 'function') {
+            return originalOnError.apply(this, arguments);
+          }
+          return false;
+        };
+
+        window.addEventListener(
+          'error',
+          function(e) {
+            var msg = (e && e.message) || (e && e.error && e.error.message) || String(e);
+            var file = (e && e.filename) || '';
+            if (
+              file.indexOf('chrome-extension') !== -1 ||
+              msg.indexOf('chrome-extension') !== -1 ||
+              msg.indexOf('fetch of #<Window>') !== -1 ||
+              msg.indexOf('frame_ant') !== -1
+            ) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              return true;
+            }
+          },
+          true
+        );
+
+        window.addEventListener(
+          'unhandledrejection',
+          function(e) {
+            var reason = e && e.reason;
+            var msg = (reason && (reason.message || String(reason))) || String(reason || '');
+            if (
+              msg.indexOf('signal is aborted') !== -1 ||
+              msg.indexOf('AbortError') !== -1 ||
+              msg.indexOf('fetch of #<Window>') !== -1 ||
+              msg.indexOf('chrome-extension') !== -1 ||
+              msg.indexOf('frame_ant') !== -1
+            ) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              return true;
+            }
+          },
+          true
+        );
       })();
     </script>
     <title>Instamart PO & DN Tracker</title>
