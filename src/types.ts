@@ -14,6 +14,7 @@ export interface EmployeePermissions {
   canVerifyPrint: boolean;
   canManageGrn: boolean;
   canManageDn: boolean;
+  canManageWarehouse?: boolean;
 }
 
 export interface EmployeeProfile {
@@ -45,6 +46,10 @@ export interface PoLineItem {
   itemId: string;
   itemName: string;
   qty: number;
+  boxDimensions?: string;
+  noOfBoxes?: number;
+  boxWeight?: string;
+  packedStatus?: 'PENDING' | 'PACKED';
 }
 
 export interface PurchaseOrder {
@@ -176,6 +181,7 @@ export interface ActivityLog {
   action: string;
   module:
     | 'PO_ENTRY'
+    | 'WAREHOUSE'
     | 'IN_TRANSIT'
     | 'RTO_TRACKER'
     | 'GRN'
@@ -199,6 +205,7 @@ export interface ActivityLog {
 export type ActiveTab =
   | 'DASHBOARD'
   | 'PO_ENTRY'
+  | 'WAREHOUSE'
   | 'PAYMENTS'
   | 'LOGISTICS'
   | 'PRINT_TEAM'

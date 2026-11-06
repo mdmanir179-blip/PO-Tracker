@@ -93,6 +93,8 @@ import { NotificationCenter } from './components/NotificationCenter';
 import { BrandLogo } from './components/BrandLogo';
 import { RtoModal } from './components/RtoModal';
 import { RtoTrackerTab } from './components/RtoTrackerTab';
+import { WarehouseTab, WarehouseBoxUpdatePayload, WarehousePickupPayload } from './components/WarehouseTab';
+import { PoDetailsModal } from './components/PoDetailsModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { PWAInstallButton, FloatingInstallBanner } from './components/PWAInstallButton';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
@@ -200,6 +202,7 @@ export default function App() {
 
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
+  const [selectedPoForDetails, setSelectedPoForDetails] = useState<PurchaseOrder | null>(null);
 
   // RTO Management Modal State (RTO Picked Status, Tracking ID, Courier, Pick Date, Reason, WH Received)
   const [isRtoModalOpen, setIsRtoModalOpen] = useState(false);
@@ -1366,6 +1369,54 @@ export default function App() {
     }
   };
 
+  // Warehouse: Update Box Dimensions & Line Items Packaging
+  const handleWarehouseUpdateBoxDimensions = async (payload: WarehouseBoxUpdatePayload) => {
+    if (!firebaseUser || !employeeProfile) return;
+    try {
+      await updateDoc(doc(db, 'purchase_orders', payload.poId), {
+        noOfBoxes: payload.noOfBoxes,
+        boxDimensions: payload.boxDimensions,
+        lineItems: payload.lineItems,
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        'Updated Box Dimensions & Packaging',
+        'WAREHOUSE',
+        payload.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${payload.boxDimensions}) & ${payload.noOfBoxes} boxes for PO ${payload.poNumber}.`
+      );
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${payload.poId}`);
+    }
+  };
+
+  // Warehouse: Mark Shipment Handover / Pickup
+  const handleWarehouseMarkPickup = async (payload: WarehousePickupPayload) => {
+    if (!firebaseUser || !employeeProfile) return;
+    try {
+      const nowIso = new Date().toISOString();
+      await updateDoc(doc(db, 'purchase_orders', payload.poId), {
+        pickupStatus: 'YES',
+        status: 'In Transit',
+        workflowStage: 'IN_TRANSIT',
+        logisticsPortal: payload.logisticsPortal,
+        pickupTrackingId: payload.pickupTrackingId,
+        puc: payload.puc,
+        asn: payload.asn,
+        pickupMarkedAt: nowIso,
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        'Warehouse Shipment Handover / Picked Up',
+        'WAREHOUSE',
+        payload.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked shipment pickup via ${payload.logisticsPortal} (Tracking: ${payload.pickupTrackingId || 'N/A'}, PUC: ${payload.puc || 'N/A'}, ASN: ${payload.asn || 'N/A'}) for PO ${payload.poNumber}.`
+      );
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${payload.poId}`);
+    }
+  };
+
   // Admin: Delete Employee Record
   const requestDeleteEmployee = (emp: EmployeeProfile) => {
     if (!isAdmin) return;
@@ -2394,6 +2445,13 @@ export default function App() {
     !isRestricted && (isAdmin || isBackoffice || effectivePerms.canVerifyPrint);
   const canUserManageGrn =
     !isRestricted && (isAdmin || isBackoffice || effectivePerms.canManageGrn);
+  const canUserManageWarehouse =
+    !isRestricted &&
+    (isAdmin ||
+      isBackoffice ||
+      effectivePerms.canManageWarehouse ||
+      effectivePerms.canEditPo ||
+      effectivePerms.canManageLogistics);
   const canUserManageDn =
     !isRestricted &&
     (isAdmin ||
@@ -2403,6 +2461,7 @@ export default function App() {
 
   const activePermissionBadges = [
     { key: 'canEditPo', label: 'PO Entry', enabled: canUserEditPo },
+    { key: 'canManageWarehouse', label: 'Warehouse Dims', enabled: canUserManageWarehouse },
     { key: 'canManageCatalog', label: 'SKU Master', enabled: canManageCatalog },
     { key: 'canManageLogistics', label: 'Logistics & Delivery', enabled: canUserManageLogistics },
     { key: 'canVerifyPrint', label: 'Print Verify', enabled: canUserVerifyPrint },
@@ -2433,6 +2492,11 @@ export default function App() {
       id: 'PO_ENTRY',
       label: `01. New PO Entry (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length})`,
       shortLabel: `PO Entry (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length})`,
+    },
+    {
+      id: 'WAREHOUSE',
+      label: `Warehouse (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY' || p.workflowStage === 'IN_TRANSIT').length})`,
+      shortLabel: `Warehouse (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY' || p.workflowStage === 'IN_TRANSIT').length})`,
     },
     {
       id: 'LOGISTICS',
@@ -3747,6 +3811,25 @@ export default function App() {
           </div>
         )}
 
+        {/* TAB 1A: WAREHOUSE DEPARTMENT — PRODUCT BOX DIMENSIONS & SHIPMENT PICKUP */}
+        {activeTab === 'WAREHOUSE' && (
+          <WarehouseTab
+            purchaseOrders={purchaseOrders}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onUpdateBoxDimensions={handleWarehouseUpdateBoxDimensions}
+            onMarkPickup={handleWarehouseMarkPickup}
+            onViewPoDetails={(po) => setSelectedPoForDetails(po)}
+            onEditPo={(po) => {
+              setEditingPo(po);
+              setIsPoModalOpen(true);
+            }}
+            darkMode={darkMode}
+            isGrey={isGrey}
+            userRole={employeeProfile.role}
+          />
+        )}
+
         {/* TAB 1B: LOGISTICS DEPARTMENT — DELIVERY & DN NOTE CONTROL */}
         {activeTab === 'LOGISTICS' && (
           <div className="space-y-6">
@@ -4633,6 +4716,7 @@ export default function App() {
               setEditingPo(po);
               setIsPoModalOpen(true);
             }}
+            onViewPoDetails={(po) => setSelectedPoForDetails(po)}
             darkMode={darkMode}
             isGrey={isGrey}
             userRole={employeeProfile.role}
@@ -5831,6 +5915,20 @@ export default function App() {
         onChange={(updates) => setRtoForm((prev) => ({ ...prev, ...updates }))}
         darkMode={darkMode}
         isGrey={isGrey}
+      />
+
+      {/* Global Interactive PO Details Dialog (PO details, items, product name, date) */}
+      <PoDetailsModal
+        isOpen={Boolean(selectedPoForDetails)}
+        onClose={() => setSelectedPoForDetails(null)}
+        po={selectedPoForDetails}
+        onEditPo={(po) => {
+          setSelectedPoForDetails(null);
+          setEditingPo(po);
+          setIsPoModalOpen(true);
+        }}
+        darkMode={darkMode}
+        canEdit={canUserEditPo || canUserManageWarehouse}
       />
 
       {/* Dedicated Mobile Bottom Navigation Menu with New PO, Logistics, Printing, GRN, RTO */}

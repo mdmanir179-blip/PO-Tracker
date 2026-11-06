@@ -35,6 +35,7 @@ interface RtoTrackerTabProps {
   onQuickToggleWhReceived: (po: PurchaseOrder, received: 'YES' | 'NO') => Promise<void>;
   onRevertFromRto: (po: PurchaseOrder) => Promise<void>;
   onEditPo: (po: PurchaseOrder) => void;
+  onViewPoDetails?: (po: PurchaseOrder) => void;
   darkMode: boolean;
   isGrey: boolean;
   userRole: TeamRole;
@@ -50,6 +51,7 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
   onQuickToggleWhReceived,
   onRevertFromRto,
   onEditPo,
+  onViewPoDetails,
   darkMode,
   isGrey,
   userRole,
@@ -377,8 +379,21 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
                     >
                       {/* PO Number & Order Date */}
                       <td className="py-3 px-4">
-                        <div className="font-bold font-mono text-orange-600 dark:text-orange-400">
-                          {po.poNumber}
+                        <div className="font-bold font-mono">
+                          {onViewPoDetails ? (
+                            <button
+                              type="button"
+                              onClick={() => onViewPoDetails(po)}
+                              className="text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left"
+                              title="Click to view PO details"
+                            >
+                              {po.poNumber}
+                            </button>
+                          ) : (
+                            <span className="text-orange-600 dark:text-orange-400">
+                              {po.poNumber}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                           <Calendar className="w-3 h-3" />

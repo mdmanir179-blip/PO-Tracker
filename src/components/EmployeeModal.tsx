@@ -48,6 +48,7 @@ export function getDefaultPermissionsForRole(role: TeamRole): EmployeePermission
         canVerifyPrint: true,
         canManageGrn: true,
         canManageDn: true,
+        canManageWarehouse: true,
       };
     case 'backoffice':
       return {
@@ -57,6 +58,7 @@ export function getDefaultPermissionsForRole(role: TeamRole): EmployeePermission
         canVerifyPrint: true,
         canManageGrn: true,
         canManageDn: true,
+        canManageWarehouse: true,
       };
     case 'logistics':
       return {
@@ -66,6 +68,7 @@ export function getDefaultPermissionsForRole(role: TeamRole): EmployeePermission
         canVerifyPrint: false,
         canManageGrn: false,
         canManageDn: true,
+        canManageWarehouse: true,
       };
     case 'print':
       return {
@@ -75,6 +78,7 @@ export function getDefaultPermissionsForRole(role: TeamRole): EmployeePermission
         canVerifyPrint: true,
         canManageGrn: false,
         canManageDn: false,
+        canManageWarehouse: false,
       };
     case 'warehouse':
     default:
@@ -85,6 +89,7 @@ export function getDefaultPermissionsForRole(role: TeamRole): EmployeePermission
         canVerifyPrint: false,
         canManageGrn: true,
         canManageDn: true,
+        canManageWarehouse: true,
       };
   }
 }
@@ -222,6 +227,11 @@ export const EmployeeModal: React.FC<EmployeeModalProps> = ({
       key: 'canManageGrn',
       label: 'GRN & Inward Access',
       desc: 'Mark Inward Success -> GRN and update GRN numbers',
+    },
+    {
+      key: 'canManageWarehouse',
+      label: 'Warehouse Box Dimensions & Handover',
+      desc: 'Update product-level box dimensions, packaging and mark shipment pickup',
     },
     {
       key: 'canManageDn',

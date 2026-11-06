@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Clock,
   AlertTriangle,
+  Warehouse as WarehouseIcon,
 } from 'lucide-react';
 import { ActiveTab, PurchaseOrder, DnRecord } from '../types';
 
@@ -320,6 +321,22 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 <div className="flex items-center gap-2">
                   <Plus className="w-4 h-4 text-orange-500" />
                   <span>01. PO Entry ({poEntryCount})</span>
+                </div>
+                <ChevronRight className="w-3.5 h-3.5 opacity-40" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleTabClick('WAREHOUSE')}
+                className={`p-3 rounded-xl border text-left flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                  activeTab === 'WAREHOUSE'
+                    ? 'bg-orange-600/10 border-orange-500 text-orange-600 dark:text-orange-400 font-bold'
+                    : 'bg-slate-50 dark:bg-slate-950/50 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <WarehouseIcon className="w-4 h-4 text-amber-500" />
+                  <span>Warehouse</span>
                 </div>
                 <ChevronRight className="w-3.5 h-3.5 opacity-40" />
               </button>
