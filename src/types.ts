@@ -77,6 +77,8 @@ export interface PurchaseOrder {
   clearBagNo: string;
   comment: string;
   pickupStatus: 'YES' | 'NO';
+  pickupDate?: string;
+  pickupMarkedAt?: string;
   printVerified?: 'YES' | 'NO';
   printVerifiedBy?: string;
   workflowStage: WorkflowStage;
@@ -147,6 +149,9 @@ export interface DnRecord {
   dnSkuIdItemName: string;
   dnQty: number;
   whPocDetails: string;
+  dnReason?: string;
+  carrierName?: string;
+  carrierTrackingId?: string;
   lrNo: string;
   reportFileName: string;
   reportFileType: string;

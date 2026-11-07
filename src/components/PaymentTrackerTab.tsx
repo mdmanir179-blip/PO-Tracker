@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   CreditCard,
   AlertTriangle,
@@ -29,6 +29,7 @@ import { calculatePaymentDetails, computePaymentLedgerMetrics, formatINR } from 
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { Pagination } from './Pagination';
 
 interface PaymentTrackerTabProps {
   purchaseOrders: PurchaseOrder[];
@@ -43,6 +44,7 @@ interface PaymentTrackerTabProps {
     }
   ) => Promise<void>;
   onEditPo: (po: PurchaseOrder) => void;
+  onViewPoDetails?: (po: PurchaseOrder) => void;
   darkMode: boolean;
   isGrey: boolean;
   userRole: TeamRole;
@@ -52,6 +54,7 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
   purchaseOrders,
   onUpdatePayment,
   onEditPo,
+  onViewPoDetails,
   darkMode,
   isGrey,
   userRole,
@@ -60,6 +63,11 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'OVERDUE' | 'PARTIAL' | 'PENDING' | 'PAID'>('ALL');
   const [warehouseFilter, setWarehouseFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState<'OVERDUE_DESC' | 'DUE_DESC' | 'AMOUNT_DESC' | 'DATE_DESC'>('OVERDUE_DESC');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, warehouseFilter, sortBy]);
 
   // Payment Recording Modal State
   const [activePaymentPo, setActivePaymentPo] = useState<PurchaseOrder | null>(null);
@@ -584,28 +592,31 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr
-                  className={`border-b ${
-                    darkMode
-                      ? 'bg-slate-950/70 border-slate-800 text-slate-300'
-                      : 'bg-slate-50 border-slate-200 text-slate-600'
-                  }`}
-                >
-                  <th className="py-3 px-4 font-bold">PO Number &amp; Age</th>
-                  <th className="py-3 px-4 font-bold">Warehouse / Hub</th>
-                  <th className="py-3 px-4 font-bold">Total PO Value (₹)</th>
-                  <th className="py-3 px-4 font-bold">Paid Amount (₹)</th>
-                  <th className="py-3 px-4 font-bold">Outstanding Due (₹)</th>
-                  <th className="py-3 px-4 font-bold">Payment Status</th>
-                  <th className="py-3 px-4 font-bold">Term / Aging</th>
-                  <th className="py-3 px-4 font-bold text-right">Payment Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-sans">
-                {filteredPos.map(({ po, details }) => {
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr
+                    className={`border-b ${
+                      darkMode
+                        ? 'bg-slate-950/70 border-slate-800 text-slate-300'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <th className="py-3 px-4 font-bold">PO Number &amp; Age</th>
+                    <th className="py-3 px-4 font-bold">Warehouse / Hub</th>
+                    <th className="py-3 px-4 font-bold">Total PO Value (₹)</th>
+                    <th className="py-3 px-4 font-bold">Paid Amount (₹)</th>
+                    <th className="py-3 px-4 font-bold">Outstanding Due (₹)</th>
+                    <th className="py-3 px-4 font-bold">Payment Status</th>
+                    <th className="py-3 px-4 font-bold">Term / Aging</th>
+                    <th className="py-3 px-4 font-bold text-right">Payment Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-sans">
+                  {filteredPos
+                    .slice((currentPage - 1) * 10, currentPage * 10)
+                    .map(({ po, details }) => {
                   const hasHistory = Array.isArray(po.paymentHistory) && po.paymentHistory.length > 0;
 
                   return (
@@ -626,8 +637,9 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => onEditPo(po)}
-                            className="font-mono font-bold text-orange-600 dark:text-orange-400 hover:underline text-xs"
+                            onClick={() => (onViewPoDetails ? onViewPoDetails(po) : onEditPo(po))}
+                            className="font-mono font-bold text-orange-600 dark:text-orange-400 hover:underline text-xs cursor-pointer"
+                            title="Click to view PO details"
                           >
                             {po.poNumber}
                           </button>
@@ -835,8 +847,17 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+          <Pagination
+            currentPage={currentPage}
+            totalItems={filteredPos.length}
+            pageSize={10}
+            onPageChange={setCurrentPage}
+            darkMode={darkMode}
+            itemLabel="PO payment records"
+          />
+        </>
+      )}
+    </div>
 
       {/* 6. Record Payment Modal (Partition / Full Pay) */}
       {activePaymentPo && (

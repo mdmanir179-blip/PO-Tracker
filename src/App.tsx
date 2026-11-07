@@ -49,6 +49,8 @@ import {
   CreditCard,
   Radio,
   Menu,
+  LayoutDashboard,
+  Warehouse as WarehouseIcon,
 } from 'lucide-react';
 import {
   db,
@@ -96,6 +98,7 @@ import { RtoTrackerTab } from './components/RtoTrackerTab';
 import { WarehouseTab, WarehouseBoxUpdatePayload, WarehousePickupPayload } from './components/WarehouseTab';
 import { PoDetailsModal } from './components/PoDetailsModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { Pagination } from './components/Pagination';
 import { PWAInstallButton, FloatingInstallBanner } from './components/PWAInstallButton';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { calculatePaymentDetails, computePaymentLedgerMetrics, formatINR } from './utils/paymentUtils';
@@ -172,6 +175,8 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('PO_ENTRY');
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const PAGE_SIZE = 10;
 
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [dnRecords, setDnRecords] = useState<DnRecord[]>([]);
@@ -377,6 +382,11 @@ export default function App() {
   const handleDismissAllNotifications = () => {
     setDismissedNotifications(activeNotifications.map((n) => n.id));
   };
+
+  // Reset table pagination when tab or search query changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchQuery]);
 
   // Listen to Firebase Auth state
   useEffect(() => {
@@ -1382,8 +1392,8 @@ export default function App() {
       await recordActivity(
         'Updated Box Dimensions & Packaging',
         'WAREHOUSE',
-        payload.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${payload.boxDimensions}) & ${payload.noOfBoxes} boxes for PO ${payload.poNumber}.`
+        payload.poNumber || payload.poId,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${payload.boxDimensions}) & ${payload.noOfBoxes} boxes for PO ${payload.poNumber || payload.poId}.`
       );
     } catch (err: any) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${payload.poId}`);
@@ -1409,8 +1419,8 @@ export default function App() {
       await recordActivity(
         'Warehouse Shipment Handover / Picked Up',
         'WAREHOUSE',
-        payload.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked shipment pickup via ${payload.logisticsPortal} (Tracking: ${payload.pickupTrackingId || 'N/A'}, PUC: ${payload.puc || 'N/A'}, ASN: ${payload.asn || 'N/A'}) for PO ${payload.poNumber}.`
+        payload.poNumber || payload.poId,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked shipment pickup via ${payload.logisticsPortal || 'Transporter'} (Tracking: ${payload.pickupTrackingId || 'N/A'}, PUC: ${payload.puc || 'N/A'}, ASN: ${payload.asn || 'N/A'}) for PO ${payload.poNumber || payload.poId}.`
       );
     } catch (err: any) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${payload.poId}`);
@@ -2211,16 +2221,23 @@ export default function App() {
 
   const allFilteredPos = useMemo(
     () =>
-      purchaseOrders.filter(
-        (po) =>
-          po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          po.itemId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (po.logisticsPortal || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (po.pickupTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (po.rtoTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase())
-      ),
+      purchaseOrders
+        .filter(
+          (po) =>
+            po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            po.itemId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (po.logisticsPortal || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (po.pickupTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (po.rtoTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .sort((a, b) => {
+          // Serial order: earliest appointment date or shipment date first
+          const dateA = a.appointmentDate || a.shipDate || a.orderDate || '9999-99-99';
+          const dateB = b.appointmentDate || b.shipDate || b.orderDate || '9999-99-99';
+          return dateA.localeCompare(dateB);
+        }),
     [purchaseOrders, searchQuery]
   );
 
@@ -2242,43 +2259,101 @@ export default function App() {
     return allFilteredPos;
   }, [allFilteredPos, logisticsSignalFilterOnly]);
 
+  // Print Verification Team List: Pending verification (NO) always appears first!
+  const printTeamList = useMemo(() => {
+    return allFilteredPos.slice().sort((a, b) => {
+      const aPending = a.printVerified !== 'YES';
+      const bPending = b.printVerified !== 'YES';
+      if (aPending && !bPending) return -1;
+      if (!aPending && bPending) return 1;
+
+      const dateA = a.appointmentDate || a.shipDate || a.orderDate || '9999-99-99';
+      const dateB = b.appointmentDate || b.shipDate || b.orderDate || '9999-99-99';
+      return dateA.localeCompare(dateB);
+    });
+  }, [allFilteredPos]);
+
+  // Authoritative unfiltered In Transit POs (always matches dashboard and tab count)
+  const actualInTransitPos = useMemo(() => {
+    return purchaseOrders.filter((po) => {
+      // Exclude RTO
+      const isRto =
+        po.isRto === true ||
+        po.workflowStage === 'RTO' ||
+        (po.status || '').toUpperCase() === 'RTO' ||
+        (po.status || '').toUpperCase().startsWith('RTO') ||
+        (po.status || '').toUpperCase().includes('RETURN TO ORIGIN');
+      if (isRto) return false;
+
+      // Exclude GRN
+      const isGrn =
+        po.workflowStage === 'GRN' ||
+        po.inwardStatus === 'SUCCESS' ||
+        Boolean(po.grnNumber && po.grnNumber.trim()) ||
+        (po.status || '').toUpperCase().includes('GRN') ||
+        (po.status || '').toUpperCase().includes('DELIVERED');
+      if (isGrn) return false;
+
+      return (
+        po.workflowStage === 'IN_TRANSIT' ||
+        (po.pickupStatus === 'YES' && po.workflowStage !== 'PO_ENTRY')
+      );
+    });
+  }, [purchaseOrders]);
+
+  // Filtered & Chronologically Sorted In Transit List with Today/Tomorrow Appointments First
   const inTransitList = useMemo(
-    () =>
-      purchaseOrders.filter((po) => {
-        // Automatically exclude PO if marked as RTO
-        const isRto =
-          po.isRto === true ||
-          po.workflowStage === 'RTO' ||
-          (po.status || '').toUpperCase() === 'RTO' ||
-          (po.status || '').toUpperCase().startsWith('RTO') ||
-          (po.status || '').toUpperCase().includes('RETURN TO ORIGIN');
-        if (isRto) return false;
+    () => {
+      const q = searchQuery.toLowerCase().trim();
 
-        // Automatically exclude PO if marked as GRN / Inward Success
-        const isGrn =
-          po.workflowStage === 'GRN' ||
-          po.inwardStatus === 'SUCCESS' ||
-          Boolean(po.grnNumber && po.grnNumber.trim()) ||
-          (po.status || '').toUpperCase().includes('GRN') ||
-          (po.status || '').toUpperCase().includes('DELIVERED');
-        if (isGrn) return false;
+      const getAppointmentUrgency = (appointmentDate?: string) => {
+        if (!appointmentDate || !appointmentDate.trim()) return 999;
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${y}-${m}-${d}`;
 
-        // Must be in transit stage
-        const isInTransit =
-          po.workflowStage === 'IN_TRANSIT' ||
-          (po.pickupStatus === 'YES' && po.workflowStage !== 'PO_ENTRY');
-        if (!isInTransit) return false;
+        const tom = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        const tomY = tom.getFullYear();
+        const tomM = String(tom.getMonth() + 1).padStart(2, '0');
+        const tomD = String(tom.getDate()).padStart(2, '0');
+        const tomorrowStr = `${tomY}-${tomM}-${tomD}`;
 
-        const q = searchQuery.toLowerCase();
-        return (
-          po.poNumber.toLowerCase().includes(q) ||
-          po.warehouseName.toLowerCase().includes(q) ||
-          po.itemName.toLowerCase().includes(q) ||
-          po.pickupTrackingId.toLowerCase().includes(q) ||
-          (po.status || '').toLowerCase().includes(q)
-        );
-      }),
-    [purchaseOrders, searchQuery]
+        const appt = appointmentDate.trim();
+        if (appt === todayStr) return 1; // Today's appointment - Priority 1
+        if (appt === tomorrowStr) return 2; // Tomorrow's appointment - Priority 2
+        if (appt < todayStr) return 3; // Past due appointment
+        return 4; // Future appointment
+      };
+
+      return actualInTransitPos
+        .filter((po) => {
+          if (!q) return true;
+          return (
+            po.poNumber.toLowerCase().includes(q) ||
+            po.warehouseName.toLowerCase().includes(q) ||
+            po.itemName.toLowerCase().includes(q) ||
+            po.itemId.toLowerCase().includes(q) ||
+            (po.pickupTrackingId || '').toLowerCase().includes(q) ||
+            (po.status || '').toLowerCase().includes(q)
+          );
+        })
+        .sort((a, b) => {
+          // 1. Show Today and Tomorrow's appointments first!
+          const urgencyA = getAppointmentUrgency(a.appointmentDate);
+          const urgencyB = getAppointmentUrgency(b.appointmentDate);
+          if (urgencyA !== urgencyB) {
+            return urgencyA - urgencyB;
+          }
+
+          // 2. Earliest appointment date or shipment date first
+          const dateA = a.appointmentDate || a.shipDate || a.orderDate || '9999-99-99';
+          const dateB = b.appointmentDate || b.shipDate || b.orderDate || '9999-99-99';
+          return dateA.localeCompare(dateB);
+        });
+    },
+    [actualInTransitPos, searchQuery]
   );
 
   const rtoList = useMemo(
@@ -2399,6 +2474,18 @@ export default function App() {
     [purchaseOrders]
   );
 
+  const totalDnQty = useMemo(() => {
+    return dnRecords.reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0);
+  }, [dnRecords]);
+
+  const activeWarehouseCount = useMemo(() => {
+    return purchaseOrders.filter((po) => {
+      if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
+      if (po.pickupStatus === 'YES') return false;
+      return true;
+    }).length;
+  }, [purchaseOrders]);
+
   if (!authReady || isLoadingProfile) {
     return (
       <div
@@ -2482,72 +2569,104 @@ export default function App() {
     hour12: true,
   });
 
-  const navTabs: { id: ActiveTab; label: string; shortLabel: string }[] = [
+  const navTabs: {
+    id: ActiveTab;
+    label: string;
+    shortLabel: string;
+    badge?: number | string;
+    icon: React.ReactNode;
+  }[] = [
     {
       id: 'DASHBOARD',
       label: 'Performance Dashboard',
       shortLabel: 'Dashboard',
+      icon: <LayoutDashboard className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'PO_ENTRY',
-      label: `01. New PO Entry (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length})`,
-      shortLabel: `PO Entry (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length})`,
+      label: '01. New PO Entry',
+      shortLabel: 'PO Entry',
+      badge: purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length,
+      icon: <Plus className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'WAREHOUSE',
-      label: `Warehouse (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY' || p.workflowStage === 'IN_TRANSIT').length})`,
-      shortLabel: `Warehouse (${purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY' || p.workflowStage === 'IN_TRANSIT').length})`,
+      label: 'Warehouse',
+      shortLabel: 'Warehouse',
+      badge: activeWarehouseCount,
+      icon: <WarehouseIcon className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'LOGISTICS',
-      label: `Logistics & Delivery (${purchaseOrders.length}${logisticsTodaySignalPos.length > 0 ? ` · ⚡ ${logisticsTodaySignalPos.length} Signal` : ''})`,
-      shortLabel: `Logistics (${purchaseOrders.length}${logisticsTodaySignalPos.length > 0 ? ` · ⚡${logisticsTodaySignalPos.length}` : ''})`,
+      label: 'Logistics & Delivery',
+      shortLabel: 'Logistics',
+      badge: purchaseOrders.length,
+      icon: <Truck className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'PRINT_TEAM',
-      label: `Print Team (${purchaseOrders.length})`,
+      label: 'Print Team',
       shortLabel: 'Print Team',
+      badge: purchaseOrders.length,
+      icon: <Printer className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'IN_TRANSIT',
-      label: `02. In Transit (${inTransitList.length})`,
-      shortLabel: `In Transit (${inTransitList.length})`,
+      label: '02. In Transit',
+      shortLabel: 'In Transit',
+      badge: actualInTransitPos.length,
+      icon: <Truck className="w-4 h-4 shrink-0 text-amber-500" />,
     },
     {
       id: 'RTO_TRACKER',
-      label: `RTO Management (${rtoList.length})`,
-      shortLabel: `RTO (${rtoList.length})`,
+      label: 'RTO Management',
+      shortLabel: 'RTO',
+      badge: rtoList.length,
+      icon: <RotateCcw className="w-4 h-4 shrink-0 text-orange-500" />,
     },
     {
       id: 'GRN',
-      label: `03. GRN & Inward (${grnList.length})`,
-      shortLabel: `GRN (${grnList.length})`,
+      label: '03. GRN & Inward',
+      shortLabel: 'GRN',
+      badge: grnList.length,
+      icon: <PackageCheck className="w-4 h-4 shrink-0 text-emerald-500" />,
     },
     {
       id: 'DN_TRACKER',
-      label: `04. DN Tracker (${grnDnList.length})`,
-      shortLabel: `DN (${grnDnList.length})`,
+      label: `04. DN Tracker (${dnRecords.length} DNs · ${totalDnQty} Qty)`,
+      shortLabel: `DN (${dnRecords.length})`,
+      badge: dnRecords.length,
+      icon: <FileText className="w-4 h-4 shrink-0 text-rose-500" />,
     },
     {
       id: 'POC_DIRECTORY',
-      label: `Instamart POC Team (${pocContacts.length})`,
-      shortLabel: `POC Team (${pocContacts.length})`,
+      label: 'Instamart POC Team',
+      shortLabel: 'POC Team',
+      badge: pocContacts.length,
+      icon: <Users className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'PAYMENTS',
-      label: `PO Payments (${paymentLedgerMetrics.overdueCount > 0 ? `🚨 ${paymentLedgerMetrics.overdueCount} Overdue` : `${purchaseOrders.length}`})`,
-      shortLabel: `PO Payments (${paymentLedgerMetrics.overdueCount > 0 ? `🚨 ${paymentLedgerMetrics.overdueCount} Overdue` : 'Clear'})`,
+      label: 'PO Payments',
+      shortLabel: 'Payments',
+      badge:
+        paymentLedgerMetrics.overdueCount > 0
+          ? `🚨 ${paymentLedgerMetrics.overdueCount}`
+          : purchaseOrders.length,
+      icon: <CreditCard className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'ADMIN_AUDIT',
-      label: `05. Admin & Staff Control (${employeesList.length})`,
-      shortLabel: `Admin (${employeesList.length})`,
+      label: '05. Admin & Staff Controls',
+      shortLabel: 'Admin',
+      badge: employeesList.length,
+      icon: <ShieldCheck className="w-4 h-4 shrink-0" />,
     },
   ];
 
   return (
     <div
-      className={`min-h-screen w-full flex flex-col transition-colors ${
+      className={`min-h-screen w-full flex flex-col lg:flex-row transition-colors ${
         darkMode
           ? 'bg-slate-950 text-slate-100'
           : isGrey
@@ -2555,29 +2674,20 @@ export default function App() {
           : 'bg-slate-50 text-slate-900'
       }`}
     >
-      {/* Top Bar Contract: Full-width Desktop & Responsive Mobile/Tablet */}
-      <header
-        className={`sticky top-0 z-30 w-full flex flex-wrap items-center justify-between gap-2 px-3 sm:px-5 lg:px-6 py-2.5 sm:py-3 border-b ${
+      {/* ======================================================== */}
+      {/* 1. LEFT SIDEBAR NAVIGATION (Desktop & Tablet >= lg)      */}
+      {/* ======================================================== */}
+      <aside
+        className={`hidden lg:flex flex-col w-64 xl:w-72 shrink-0 h-screen sticky top-0 z-40 border-r select-none ${
           darkMode
-            ? 'bg-slate-900 border-slate-800'
+            ? 'bg-slate-900 border-slate-800 text-slate-200'
             : isGrey
-            ? 'bg-zinc-100 border-zinc-300'
-            : 'bg-white border-slate-200'
+            ? 'bg-zinc-100 border-zinc-300 text-zinc-900'
+            : 'bg-white border-slate-200 text-slate-800'
         }`}
       >
-        {/* Zone 1: Brand Logo & Title + Mobile Menu Bar Toggle */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* Mobile Top Menu Bar Button (Visible on mobile only: < md) */}
-          <button
-            type="button"
-            onClick={() => setIsMobileDrawerOpen(true)}
-            className="md:hidden px-2.5 py-1.5 rounded-lg border border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold shadow-xs active:scale-95"
-            title="Open Mobile Navigation Menu"
-          >
-            <Menu className="w-4 h-4" />
-            <span className="hidden xs:inline">Menu</span>
-          </button>
-
+        {/* Sidebar Header: Brand Logo */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800">
           <BrandLogo
             size="md"
             showSubtitle={true}
@@ -2585,222 +2695,273 @@ export default function App() {
           />
         </div>
 
-        {/* Zone 2: Desktop Full-Screen Navigation Links */}
-        <nav className="hidden xl:flex items-center gap-2 2xl:gap-3 text-xs font-semibold">
-          {navTabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setActiveTab(t.id)}
-              className={`py-1 border-b-2 transition-colors whitespace-nowrap cursor-pointer ${
-                activeTab === t.id
-                  ? 'border-orange-500 text-orange-600 dark:text-orange-400 font-bold'
-                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-
-        {/* Zone 3: Live Clock + Mobile/PC App Install + Notifications + SKU Master + Excel + Theme Switcher + Logout */}
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-          {/* Mobile & Computer App Direct Install Button */}
-          <PWAInstallButton darkMode={darkMode} />
-
-          {/* Live Clock with Date */}
-          <div
-            className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] lg:text-xs font-mono ${
-              darkMode
-                ? 'border-slate-700 bg-slate-800/80 text-slate-200'
-                : isGrey
-                ? 'border-zinc-300 bg-zinc-200 text-zinc-900'
-                : 'border-slate-200 bg-slate-100 text-slate-800'
-            }`}
-            title="Live System Clock & Date"
-          >
-            <Clock className="w-3.5 h-3.5 text-orange-500 shrink-0" />
-            <span className="font-semibold whitespace-nowrap">{formattedLiveDate}</span>
-            <span className="text-slate-400">|</span>
-            <span className="font-bold text-orange-600 dark:text-orange-400 tabular-nums whitespace-nowrap">
-              {formattedLiveTime}
+        {/* User Identity Pill */}
+        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-500/5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-bold truncate" title={employeeProfile.employeeName}>
+              {employeeProfile.employeeName}
+            </span>
+            <span className="font-mono text-[10px] text-slate-400">
+              #{employeeProfile.employeeId}
             </span>
           </div>
-
-          {/* Ops Alert & Notification Bell */}
-          <button
-            type="button"
-            onClick={() => setIsNotificationOpen((prev) => !prev)}
-            title="Operations Notifications (Expiry & Today's Appointments)"
-            className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-[11px] sm:text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer relative ${
-              visibleNotifications.length > 0
-                ? 'border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20'
-                : darkMode
-                ? 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'
-                : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
-            }`}
-          >
-            {todayAppointmentNotifications.length > 0 || expiredNotifications.length > 0 ? (
-              <BellRing className="w-3.5 h-3.5 text-orange-500 animate-bounce shrink-0" />
-            ) : (
-              <Bell className="w-3.5 h-3.5 shrink-0" />
-            )}
-            <span className="hidden sm:inline">Notifications</span>
-            {visibleNotifications.length > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-red-600 text-white min-w-4 text-center leading-none">
-                {visibleNotifications.length}
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+            <span className="text-[10px] uppercase font-bold text-orange-600 dark:text-orange-400">
+              {employeeProfile.role}
+            </span>
+            {isAdmin && (
+              <span className="text-[9px] px-1.5 py-0.2 rounded bg-orange-500/20 text-orange-600 dark:text-orange-400 font-extrabold ml-auto">
+                ADMIN
               </span>
             )}
-          </button>
+          </div>
+        </div>
 
-          <button
-            type="button"
-            onClick={() => setIsCatalogModalOpen(true)}
-            className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-[11px] sm:text-xs font-semibold border flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-              darkMode
-                ? 'border-orange-500/40 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20'
-                : isGrey
-                ? 'border-orange-400 bg-orange-50 text-orange-900 hover:bg-orange-100'
-                : 'border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100'
-            }`}
-          >
-            <Package className="w-3.5 h-3.5 text-orange-500 shrink-0" />
-            <span>SKU Master ({catalogItems.length})</span>
-          </button>
+        {/* Vertical Navigation Tabs List */}
+        <nav className="flex-1 overflow-y-auto p-2.5 space-y-1 text-xs">
+          {navTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl font-medium transition-all text-left cursor-pointer group ${
+                  isActive
+                    ? 'bg-gradient-to-r from-orange-600 to-amber-600 text-white font-bold shadow-md shadow-orange-500/25'
+                    : darkMode
+                    ? 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                    : isGrey
+                    ? 'text-zinc-700 hover:bg-zinc-200/80 hover:text-zinc-900'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 truncate">
+                  <span className={isActive ? 'text-white' : 'text-slate-400 group-hover:text-orange-500'}>
+                    {tab.icon}
+                  </span>
+                  <span className="truncate">{tab.label}</span>
+                </div>
+                {tab.badge !== undefined && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 tabular-nums ${
+                      isActive
+                        ? 'bg-white/25 text-white'
+                        : darkMode
+                        ? 'bg-slate-800 text-slate-300'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
 
-          <button
-            type="button"
-            onClick={() =>
-              exportMasterWorkbookToExcel(purchaseOrders, dnRecords, activityLogs)
-            }
-            className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-[11px] sm:text-xs font-semibold border flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
-              darkMode
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-            }`}
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-            <span className="hidden sm:inline">Download Excel</span>
-          </button>
+        {/* Sidebar Footer: System Clock + Theme Switcher + Logout */}
+        <div className="p-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+          {/* Live System Time */}
+          <div className="flex items-center justify-between px-2 text-[11px] font-mono text-slate-400">
+            <span>{formattedLiveDate}</span>
+            <span className="font-bold text-orange-600 dark:text-orange-400">{formattedLiveTime}</span>
+          </div>
 
-          {/* 3-Way Theme Switcher: Light / Grey / Dark */}
-          <div
-            className={`inline-flex items-center rounded-lg p-0.5 border ${
-              darkMode
-                ? 'border-slate-700 bg-slate-800'
-                : isGrey
-                ? 'border-zinc-300 bg-zinc-200'
-                : 'border-slate-200 bg-slate-100'
-            }`}
-          >
+          {/* Theme switcher */}
+          <div className="flex items-center justify-between gap-1 p-1 rounded-lg bg-slate-500/10 text-xs">
             <button
               type="button"
               onClick={() => setThemeMode('light')}
-              title="Light Mode"
-              className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer ${
-                themeMode === 'light'
-                  ? 'bg-white text-orange-600 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
+                themeMode === 'light' ? 'bg-white text-orange-600 shadow-xs' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Sun className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Light</span>
+              Light
             </button>
             <button
               type="button"
               onClick={() => setThemeMode('grey')}
-              title="Soft Grey Mode"
-              className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer ${
-                themeMode === 'grey'
-                  ? 'bg-zinc-700 text-white shadow-xs'
-                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
+                themeMode === 'grey' ? 'bg-zinc-700 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Monitor className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Grey</span>
+              Grey
             </button>
             <button
               type="button"
               onClick={() => setThemeMode('dark')}
-              title="Dark Mode"
-              className={`px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer ${
-                themeMode === 'dark'
-                  ? 'bg-slate-950 text-amber-400 shadow-xs'
-                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+              className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
+                themeMode === 'dark' ? 'bg-slate-950 text-amber-400 shadow-xs' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Moon className="w-3.5 h-3.5" />
-              <span className="hidden lg:inline">Dark</span>
+              Dark
             </button>
           </div>
 
+          {/* Logout button */}
           <button
             type="button"
             onClick={logout}
-            title="Sign Out"
-            className={`p-1.5 sm:p-2 rounded-lg border transition-colors cursor-pointer ${
-              darkMode
-                ? 'border-slate-700 bg-slate-800 text-slate-300 hover:text-red-400'
-                : 'border-slate-200 bg-slate-100 text-slate-700 hover:text-red-600'
-            }`}
+            className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10 text-xs font-semibold cursor-pointer transition-colors"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign Out</span>
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Offline Status Connectivity Banner */}
-      {!isOnline && (
-        <div className="w-full bg-amber-500 text-slate-950 px-4 py-2 text-xs font-bold flex items-center justify-center gap-2 shadow-xs">
-          <WifiOff className="w-4 h-4 shrink-0" />
-          <span>
-            Offline Mode: Working from local cached data. Changes will sync automatically when internet connection is restored.
-          </span>
-        </div>
-      )}
+      {/* ======================================================== */}
+      {/* 2. RIGHT MAIN CONTENT AREA                               */}
+      {/* ======================================================== */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
+        {/* Top Header Bar */}
+        <header
+          className={`sticky top-0 z-30 w-full flex flex-wrap items-center justify-between gap-2 px-3 sm:px-5 lg:px-6 py-2.5 sm:py-3 border-b ${
+            darkMode
+              ? 'bg-slate-900 border-slate-800'
+              : isGrey
+              ? 'bg-zinc-100 border-zinc-300'
+              : 'bg-white border-slate-200'
+          }`}
+        >
+          {/* Mobile Brand Logo + Mobile Menu Toggle (< lg) */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => setIsMobileDrawerOpen(true)}
+              className="lg:hidden px-2.5 py-1.5 rounded-lg border border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold shadow-xs active:scale-95"
+              title="Open Navigation Menu"
+            >
+              <Menu className="w-4 h-4" />
+              <span>Menu</span>
+            </button>
 
-      {/* Responsive Sub-Header: Employee Identity + Live Active Permissions + Scrollable Navigation Bar */}
-      <div
-        className={`w-full px-3 sm:px-5 lg:px-6 py-2.5 border-b flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 text-xs ${
-          darkMode
-            ? 'bg-slate-900/50 border-slate-800 text-slate-300'
-            : isGrey
-            ? 'bg-zinc-200/80 border-zinc-300 text-zinc-800'
-            : 'bg-slate-100/80 border-slate-200 text-slate-600'
-        }`}
-      >
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-          <span>Active Employee:</span>
-          <strong className={darkMode ? 'text-white' : 'text-slate-900'}>
-            {employeeProfile.employeeName}
-          </strong>
-          <span>·</span>
-          <span className="font-mono">ID: {employeeProfile.employeeId}</span>
-          <span>·</span>
-          <span>
-            Role:{' '}
-            <strong className="text-orange-600 dark:text-orange-400 uppercase">
-              {employeeProfile.role}
+            <div className="lg:hidden">
+              <BrandLogo size="sm" showSubtitle={false} />
+            </div>
+
+            {/* Desktop Workspace Title & Breadcrumb */}
+            <div className="hidden lg:flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" />
+              <h1 className="text-sm font-bold tracking-tight">
+                {navTabs.find((t) => t.id === activeTab)?.label}
+              </h1>
+            </div>
+          </div>
+
+          {/* Quick Header Actions: Install PWA + SKU Master + Master Excel + Notifications Bell */}
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 ml-auto">
+            <PWAInstallButton darkMode={darkMode} />
+
+            <button
+              type="button"
+              onClick={() => setIsNotificationOpen((prev) => !prev)}
+              title="Operations Notifications (Expiry & Appointments)"
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer relative ${
+                visibleNotifications.length > 0
+                  ? 'border-orange-500/50 bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20'
+                  : darkMode
+                  ? 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              {todayAppointmentNotifications.length > 0 || expiredNotifications.length > 0 ? (
+                <BellRing className="w-3.5 h-3.5 text-orange-500 animate-bounce shrink-0" />
+              ) : (
+                <Bell className="w-3.5 h-3.5 shrink-0" />
+              )}
+              <span className="hidden sm:inline">Alerts</span>
+              {visibleNotifications.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-red-600 text-white min-w-4 text-center leading-none">
+                  {visibleNotifications.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsCatalogModalOpen(true)}
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                darkMode
+                  ? 'border-orange-500/40 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20'
+                  : isGrey
+                  ? 'border-orange-400 bg-orange-50 text-orange-900 hover:bg-orange-100'
+                  : 'border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100'
+              }`}
+            >
+              <Package className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+              <span className="hidden sm:inline">SKU Master</span>
+              <span className="font-mono text-[11px]">({catalogItems.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                exportMasterWorkbookToExcel(purchaseOrders, dnRecords, activityLogs)
+              }
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors whitespace-nowrap cursor-pointer ${
+                darkMode
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                  : 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <span className="hidden md:inline">Download Excel</span>
+            </button>
+
+            {/* Mobile-only Logout button */}
+            <button
+              type="button"
+              onClick={logout}
+              title="Sign Out"
+              className={`lg:hidden p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                darkMode
+                  ? 'border-slate-700 bg-slate-800 text-slate-300 hover:text-red-400'
+                  : 'border-slate-200 bg-slate-100 text-slate-700 hover:text-red-600'
+              }`}
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
+
+        {/* Offline Status Connectivity Banner */}
+        {!isOnline && (
+          <div className="w-full bg-amber-500 text-slate-950 px-4 py-2 text-xs font-bold flex items-center justify-center gap-2 shadow-xs">
+            <WifiOff className="w-4 h-4 shrink-0" />
+            <span>
+              Offline Mode: Working from local cached data. Changes will sync automatically when internet connection is restored.
+            </span>
+          </div>
+        )}
+
+        {/* Permissions & Identity Bar */}
+        <div
+          className={`w-full px-3 sm:px-5 lg:px-6 py-2 border-b flex flex-wrap items-center justify-between gap-2 text-xs ${
+            darkMode
+              ? 'bg-slate-900/50 border-slate-800 text-slate-300'
+              : isGrey
+              ? 'bg-zinc-200/80 border-zinc-300 text-zinc-800'
+              : 'bg-slate-100/80 border-slate-200 text-slate-600'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>Staff:</span>
+            <strong className={darkMode ? 'text-white' : 'text-slate-900'}>
+              {employeeProfile.employeeName}
             </strong>
-          </span>
-          {isAdmin && (
-            <span className="px-2 py-0.5 rounded bg-orange-500/15 text-orange-600 dark:text-orange-400 font-bold text-[11px]">
-              MASTER ADMIN CONTROLLER
+            <span>·</span>
+            <span className="font-mono text-[11px]">ID: {employeeProfile.employeeId}</span>
+            <span>·</span>
+            <span className="text-orange-600 dark:text-orange-400 font-bold uppercase text-[11px]">
+              {employeeProfile.role}
             </span>
-          )}
-          {isBackoffice && (
-            <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-              BACKOFFICE FULL ACCESS
-            </span>
-          )}
-          {isRestricted && (
-            <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-600 dark:text-red-400 font-bold">
-              RESTRICTED (Read-Only)
-            </span>
-          )}
-          <span className="hidden sm:inline text-slate-400">|</span>
+          </div>
+
           <div className="flex flex-wrap items-center gap-1">
-            <span className="text-[11px] text-slate-500">Active Panel Permissions:</span>
+            <span className="text-[11px] text-slate-500 hidden sm:inline">Permissions:</span>
             {activePermissionBadges.map((b) => (
               <span
                 key={b.key}
@@ -2814,194 +2975,134 @@ export default function App() {
               </span>
             ))}
           </div>
-          <span className="md:hidden font-mono font-semibold text-orange-600 dark:text-orange-400 ml-auto">
-            {formattedLiveDate} | {formattedLiveTime}
-          </span>
         </div>
 
-        {/* Responsive Tab Strip (Visible on Screens where top bar nav wraps: < xl) */}
-        <div className="flex xl:hidden items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-          {navTabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setActiveTab(t.id)}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                activeTab === t.id
-                  ? 'bg-orange-600 text-white shadow-xs'
-                  : darkMode
-                  ? 'bg-slate-800/70 text-slate-300 hover:bg-slate-800'
-                  : 'bg-white/80 text-slate-700 hover:bg-white'
-              }`}
-            >
-              {t.shortLabel}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Main Content Container: Full Screen Width on Desktop (`w-full max-w-none`), Responsive Padding on Mobile */}
-      <main className="flex-1 w-full max-w-none px-3 sm:px-5 lg:px-6 py-4 sm:py-5 pb-24 md:pb-6 space-y-5 overflow-x-hidden">
-        {/* Summary Metrics Bar (Responsive 1 -> 2 -> 5 Columns) */}
-        <div
-          className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 p-3.5 sm:p-4 rounded-xl border ${
-            darkMode
-              ? 'bg-slate-900 border-slate-800'
-              : isGrey
-              ? 'bg-zinc-100 border-zinc-300'
-              : 'bg-white border-slate-200'
-          }`}
-        >
-          <div className=" pb-3 sm:pb-0 border-b sm:border-b-0 sm:pr-4 sm:border-r border-slate-200 dark:border-slate-800">
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              Active PO Entry Queue
-            </div>
-            <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1">
-              {purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">
-              Awaiting Pickup Status: YES
-            </div>
-          </div>
-
-          <div className="pb-3 sm:pb-0 border-b sm:border-b-0 lg:pr-4 lg:border-r border-slate-200 dark:border-slate-800">
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              In Transit Shipments
-            </div>
-            <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 text-amber-600 dark:text-amber-400">
-              {purchaseOrders.filter((p) => p.workflowStage === 'IN_TRANSIT').length}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">
-              Full Backoffice & Admin Access · Auto-Synced to DN
-            </div>
-          </div>
-
-          {/* Metric 3: Today's Appointments (Live Alert) */}
+        {/* Main Content Body */}
+        <main className="flex-1 w-full px-3 sm:px-5 lg:px-6 py-4 sm:py-5 pb-24 md:pb-6 space-y-5 overflow-x-hidden">
+          {/* Summary Metrics Bar */}
           <div
-            onClick={() => setIsNotificationOpen(true)}
-            className={`pb-3 sm:pb-0 border-b sm:border-b-0 sm:pr-4 sm:border-r border-slate-200 dark:border-slate-800 cursor-pointer transition-colors ${
-              todayAppointmentNotifications.length > 0 ? 'hover:bg-amber-500/5' : ''
+            className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 p-3.5 sm:p-4 rounded-xl border ${
+              darkMode
+                ? 'bg-slate-900 border-slate-800'
+                : isGrey
+                ? 'bg-zinc-100 border-zinc-300'
+                : 'bg-white border-slate-200'
             }`}
           >
-            <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
-              <span className="flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                <span>Today's Appointments</span>
-              </span>
-              {todayAppointmentNotifications.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-amber-500 text-white animate-pulse">
-                  TODAY
-                </span>
-              )}
-            </div>
-            <div
-              className={`text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 ${
-                todayAppointmentNotifications.length > 0
-                  ? 'text-amber-600 dark:text-amber-400'
-                  : 'text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              {todayAppointmentNotifications.length}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">
-              {todayAppointmentNotifications.length > 0
-                ? 'Warehouse check-in scheduled for TODAY'
-                : 'No appointments scheduled for today'}
-            </div>
-          </div>
-
-          {/* Metric 4: Expired & Expiring POs (Live Warning) */}
-          <div
-            onClick={() => setIsNotificationOpen(true)}
-            className={`pb-3 sm:pb-0 border-b sm:border-b-0 lg:pr-4 lg:border-r border-slate-200 dark:border-slate-800 cursor-pointer transition-colors ${
-              expiredNotifications.length > 0 ? 'hover:bg-red-500/5' : ''
-            }`}
-          >
-            <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
-              <span className="flex items-center gap-1">
-                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                <span>Expired POs</span>
-              </span>
-              {expiredNotifications.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-red-600 text-white animate-pulse">
-                  ACTION
-                </span>
-              )}
-            </div>
-            <div
-              className={`text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 ${
-                expiredNotifications.length > 0
-                  ? 'text-red-600 dark:text-red-400 font-extrabold'
-                  : 'text-slate-700 dark:text-slate-300'
-              }`}
-            >
-              {expiredNotifications.length}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">
-              {expiredNotifications.length > 0
-                ? `${expiredNotifications.length} PO(s) have passed expiry date`
-                : `${expiringPoCount} expiring soon (≤ 7 days)`}
-            </div>
-          </div>
-
-          {/* Metric 5: DN Tracker Records */}
-          <div>
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              Instamart DN Tracker
-            </div>
-            <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 text-orange-600 dark:text-orange-400">
-              {dnRecords.length}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">
-              Total Discrepancy Qty:{' '}
-              <span className="font-mono">
-                {dnRecords.reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0)}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* High-Visibility Notification Alert Banners */}
-        {todayAppointmentNotifications.length > 0 && (
-          <div className="p-3 sm:p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-amber-500 text-white shrink-0 mt-0.5 animate-pulse">
-                <Calendar className="w-5 h-5" />
+            <div className="pb-3 sm:pb-0 border-b sm:border-b-0 sm:pr-4 sm:border-r border-slate-200 dark:border-slate-800">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Active PO Entry Queue
               </div>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-extrabold text-[11px] uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300">
-                    TODAY'S APPOINTMENT NOTIFICATION
-                  </span>
-                  <span className="text-xs font-bold font-mono">
-                    {todayAppointmentNotifications.length} Purchase Order(s) Due Today ({formattedLiveDate})
-                  </span>
-                </div>
-                <p className="text-xs text-amber-800/90 dark:text-amber-200/90 mt-1">
-                  Active shipments have appointment scheduled for TODAY at Instamart warehouses (
-                  {todayAppointmentNotifications
-                    .slice(0, 3)
-                    .map((n) => `${n.poNumber} @ ${n.warehouseName}`)
-                    .join(', ')}
-                  {todayAppointmentNotifications.length > 3
-                    ? ` + ${todayAppointmentNotifications.length - 3} more`
-                    : ''}
-                  ). Please confirm delivery arrival and inward gate pass.
-                </p>
+              <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 text-orange-600 dark:text-orange-400">
+                {purchaseOrders.filter((p) => p.workflowStage === 'PO_ENTRY').length}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                Awaiting Pickup Status: YES
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsNotificationOpen(true)}
-                className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+
+            <div
+              onClick={() => setActiveTab('IN_TRANSIT')}
+              className="pb-3 sm:pb-0 border-b sm:border-b-0 lg:pr-4 lg:border-r border-slate-200 dark:border-slate-800 cursor-pointer transition-colors hover:bg-amber-500/5"
+            >
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                02. In Transit Shipments
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 text-amber-600 dark:text-amber-400">
+                {actualInTransitPos.length}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                Full Backoffice & Admin Access · Auto-Synced to DN
+              </div>
+            </div>
+
+            {/* Metric 3: Today's Appointments (Live Alert) */}
+            <div
+              onClick={() => setIsNotificationOpen(true)}
+              className={`pb-3 sm:pb-0 border-b sm:border-b-0 sm:pr-4 sm:border-r border-slate-200 dark:border-slate-800 cursor-pointer transition-colors ${
+                todayAppointmentNotifications.length > 0 ? 'hover:bg-amber-500/5' : ''
+              }`}
+            >
+              <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span>Today's Appointments</span>
+                </span>
+                {todayAppointmentNotifications.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-amber-500 text-white animate-pulse">
+                    TODAY
+                  </span>
+                )}
+              </div>
+              <div
+                className={`text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 ${
+                  todayAppointmentNotifications.length > 0
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-slate-700 dark:text-slate-300'
+                }`}
               >
-                <span>View Today's Appointments</span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
+                {todayAppointmentNotifications.length}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                {todayAppointmentNotifications.length > 0
+                  ? 'Warehouse check-in scheduled for TODAY'
+                  : 'No appointments scheduled for today'}
+              </div>
+            </div>
+
+            {/* Metric 4: Expired & Expiring POs (Live Warning) */}
+            <div
+              onClick={() => setIsNotificationOpen(true)}
+              className={`pb-3 sm:pb-0 border-b sm:border-b-0 lg:pr-4 lg:border-r border-slate-200 dark:border-slate-800 cursor-pointer transition-colors ${
+                expiredNotifications.length > 0 ? 'hover:bg-red-500/5' : ''
+              }`}
+            >
+              <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                  <span>Expired POs</span>
+                </span>
+                {expiredNotifications.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-red-600 text-white animate-pulse">
+                    ACTION
+                  </span>
+                )}
+              </div>
+              <div
+                className={`text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 ${
+                  expiredNotifications.length > 0
+                    ? 'text-red-600 dark:text-red-400 font-extrabold'
+                    : 'text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                {expiredNotifications.length}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                {expiredNotifications.length > 0
+                  ? `${expiredNotifications.length} PO(s) have passed expiry date`
+                  : `${expiringPoCount} expiring soon (≤ 7 days)`}
+              </div>
+            </div>
+
+            {/* Metric 5: DN Tracker Records */}
+            <div
+              onClick={() => setActiveTab('DN_TRACKER')}
+              className="cursor-pointer transition-colors hover:bg-rose-500/5"
+            >
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Instamart DN Tracker
+              </div>
+              <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 text-rose-600 dark:text-rose-400">
+                {dnRecords.length}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                Total Discrepancy Qty:{' '}
+                <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                  {totalDnQty}
+                </span>
+              </div>
             </div>
           </div>
-        )}
 
 
         {/* High-Visibility Payment Overdue Banner (> 30 Days) */}
@@ -3516,6 +3617,7 @@ export default function App() {
               setEditingPo(po);
               setIsPoModalOpen(true);
             }}
+            onViewPoDetails={(po) => setSelectedPoForDetails(po)}
             darkMode={darkMode}
             isGrey={isGrey}
             userRole={employeeProfile.role}
@@ -3567,34 +3669,37 @@ export default function App() {
                 )}
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr
-                      className={`border-b font-semibold ${
-                        darkMode
-                          ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <th className="py-3 px-4 whitespace-nowrap">PO Number & Expiry</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Item ID & Name</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Total Qty</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Invoice & Ship Date</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Appointment ID / Date</th>
-                      <th className="py-3 px-4 whitespace-nowrap">SO & Status</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Logistics & Tracking</th>
-                      <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Clear Bag</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Comment</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Entered / Updated By</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Pickup Status (YES/NO)</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {poEntryList.map((po) => {
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-3 px-4 whitespace-nowrap">PO Number & Expiry</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Item ID & Name</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Total Qty</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Invoice & Ship Date</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Appointment ID / Date</th>
+                        <th className="py-3 px-4 whitespace-nowrap">SO & Status</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Logistics & Tracking</th>
+                        <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Clear Bag</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Comment</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Entered / Updated By</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Pickup Status (YES/NO)</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {poEntryList
+                        .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                        .map((po) => {
                       const expiryInfo = getPoExpiryStatus(po.poExpiryDate);
                       const aptStatus = getAppointmentStatus(po.appointmentDate);
                       const shipStatus = getShipmentDateStatus(po.shipDate);
@@ -3614,8 +3719,15 @@ export default function App() {
                           }`}
                         >
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
-                            <div className="font-bold text-orange-600 dark:text-orange-400">
-                              {po.poNumber}
+                            <div className="font-bold">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPoForDetails(po)}
+                                className="text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-mono font-bold"
+                                title="Click to view full PO details"
+                              >
+                                {po.poNumber}
+                              </button>
                             </div>
                             <div className="text-[11px] text-slate-500">
                               Ord: {po.orderDate}
@@ -3807,7 +3919,16 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            )}
+              <Pagination
+                currentPage={currentPage}
+                totalItems={poEntryList.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setCurrentPage}
+                darkMode={darkMode}
+                itemLabel="PO entries"
+              />
+            </>
+          )}
           </div>
         )}
 
@@ -3944,33 +4065,36 @@ export default function App() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr
-                        className={`border-b font-semibold ${
-                          darkMode
-                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                            : 'bg-slate-50 border-slate-200 text-slate-600'
-                        }`}
-                      >
-                        <th className="py-3 px-4 whitespace-nowrap">PO Number & Stage</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Product SKU & Item</th>
-                        <th className="py-3 px-4 text-right whitespace-nowrap">Qty</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Pickup & Appt Dates (Live Signal)</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Logistics Partner</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Tracking / LR ID</th>
-                        <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Bag</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Pickup / Delivery Status</th>
-                        <th className="py-3 px-4 text-right whitespace-nowrap">
-                          Logistics Delivery & DN Note Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {logisticsDisplayList.map((po) => {
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr
+                          className={`border-b font-semibold ${
+                            darkMode
+                              ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                              : 'bg-slate-50 border-slate-200 text-slate-600'
+                          }`}
+                        >
+                          <th className="py-3 px-4 whitespace-nowrap">PO Number & Stage</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Product SKU & Item</th>
+                          <th className="py-3 px-4 text-right whitespace-nowrap">Qty</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Pickup & Appt Dates (Live Signal)</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Logistics Partner</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Tracking / LR ID</th>
+                          <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Bag</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Pickup / Delivery Status</th>
+                          <th className="py-3 px-4 text-right whitespace-nowrap">
+                            Logistics Delivery & DN Note Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {logisticsDisplayList
+                          .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                          .map((po) => {
                         const aptStatus = getAppointmentStatus(po.appointmentDate);
                         const shipStatus = getShipmentDateStatus(po.shipDate);
                         const isPickupToday = shipStatus.isToday;
@@ -3982,9 +4106,14 @@ export default function App() {
                           >
                             <td className="py-3 px-4 font-mono whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-orange-600 dark:text-orange-400">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPoForDetails(po)}
+                                  className="font-bold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-mono"
+                                  title="Click to view full PO details"
+                                >
                                   {po.poNumber}
-                                </span>
+                                </button>
                                 {isPickupToday && (
                                   <span className="relative flex h-2.5 w-2.5 shrink-0" title="Pickup Scheduled Today!">
                                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -4148,7 +4277,16 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
-              )}
+                <Pagination
+                  currentPage={currentPage}
+                  totalItems={logisticsDisplayList.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setCurrentPage}
+                  darkMode={darkMode}
+                  itemLabel="logistics deliveries"
+                />
+              </>
+            )}
             </div>
 
             {/* Logistics DN Notes History Sub-Table */}
@@ -4260,39 +4398,49 @@ export default function App() {
               </div>
             </div>
 
-            {allFilteredPos.length === 0 ? (
+            {printTeamList.length === 0 ? (
               <div className="p-10 text-center text-xs text-slate-500">
                 No Purchase Orders available for print verification.
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr
-                      className={`border-b font-semibold ${
-                        darkMode
-                          ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <th className="py-3 px-4 whitespace-nowrap">PO Number</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Item ID & Name</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Total Qty</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Invoice & ASN</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Print Verified Status</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Verified By</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Print & Verify Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {allFilteredPos.map((po) => (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-3 px-4 whitespace-nowrap">PO Number</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Item ID & Name</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Total Qty</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Invoice & ASN</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Print Verified Status</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Verified By</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Print & Verify Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {printTeamList
+                        .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                        .map((po) => (
                       <tr
                         key={po.id}
                         className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                       >
-                        <td className="py-3 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
-                          {po.poNumber}
+                        <td className="py-3 px-4 font-mono whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPoForDetails(po)}
+                            className="font-bold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-mono"
+                            title="Click to view full PO details"
+                          >
+                            {po.poNumber}
+                          </button>
                         </td>
                         <td className="py-3 px-4 whitespace-nowrap font-medium">
                           {po.warehouseName}
@@ -4367,7 +4515,16 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            )}
+              <Pagination
+                currentPage={currentPage}
+                totalItems={printTeamList.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setCurrentPage}
+                darkMode={darkMode}
+                itemLabel="print orders"
+              />
+            </>
+          )}
           </div>
         )}
 
@@ -4411,34 +4568,37 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr
-                      className={`border-b font-semibold ${
-                        darkMode
-                          ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <th className="py-3 px-4 whitespace-nowrap">PO Number & Expiry</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Item ID & Name</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Total Qty</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Invoice & Ship Date</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Appointment ID / Date</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Logistics & Tracking</th>
-                      <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Bag</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Inward / DN Actions</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">
-                        Backoffice & Admin Controls
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {inTransitList.map((po) => {
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-3 px-4 whitespace-nowrap">PO Number & Expiry</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Item ID & Name</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Total Qty</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Invoice & Ship Date</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Appointment ID / Date</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Boxes & Dimensions</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Logistics & Tracking</th>
+                        <th className="py-3 px-4 whitespace-nowrap">PUC / ASN / Bag</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Inward / DN Actions</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">
+                          Backoffice & Admin Controls
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {inTransitList
+                        .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                        .map((po) => {
                       const expiryInfo = getPoExpiryStatus(po.poExpiryDate);
                       const aptStatus = getAppointmentStatus(po.appointmentDate);
                       const shipStatus = getShipmentDateStatus(po.shipDate);
@@ -4458,8 +4618,15 @@ export default function App() {
                           }`}
                         >
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
-                            <div className="font-bold text-amber-600 dark:text-amber-400">
-                              {po.poNumber}
+                            <div className="font-bold">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPoForDetails(po)}
+                                className="text-amber-600 dark:text-amber-400 hover:underline cursor-pointer text-left font-mono font-bold"
+                                title="Click to view full PO details"
+                              >
+                                {po.poNumber}
+                              </button>
                             </div>
                             <div className="text-[11px] text-slate-500">
                               Ord: {po.orderDate}
@@ -4697,7 +4864,16 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            )}
+              <Pagination
+                currentPage={currentPage}
+                totalItems={inTransitList.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setCurrentPage}
+                darkMode={darkMode}
+                itemLabel="in transit shipments"
+              />
+            </>
+          )}
           </div>
         )}
 
@@ -4753,31 +4929,34 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr
-                      className={`border-b font-semibold ${
-                        darkMode
-                          ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <th className="py-3 px-4 whitespace-nowrap">GRN Number</th>
-                      <th className="py-3 px-4 whitespace-nowrap">PO Number &amp; Date</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Item ID &amp; Name</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Quantity (Shipped ➔ DN ➔ Accepted)</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">GRN Value &amp; Net Payment (₹)</th>
-                      <th className="py-3 px-4 whitespace-nowrap">GRN Status</th>
-                      <th className="py-3 px-4 whitespace-nowrap">DN Present?</th>
-                      <th className="py-3 px-4 whitespace-nowrap">GRN DN Summary / Remarks</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">DN / GRN Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {grnList.map((po) => {
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-3 px-4 whitespace-nowrap">GRN Number</th>
+                        <th className="py-3 px-4 whitespace-nowrap">PO Number &amp; Date</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Item ID &amp; Name</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Quantity (Shipped ➔ DN ➔ Accepted)</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">GRN Value &amp; Net Payment (₹)</th>
+                        <th className="py-3 px-4 whitespace-nowrap">GRN Status</th>
+                        <th className="py-3 px-4 whitespace-nowrap">DN Present?</th>
+                        <th className="py-3 px-4 whitespace-nowrap">GRN DN Summary / Remarks</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">DN / GRN Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {grnList
+                        .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                        .map((po) => {
                       const dnQty = po.hasDn ? (po.dnQty || 0) : 0;
                       const acceptedQty = po.hasDn
                         ? (typeof po.acceptedQty === 'number' ? po.acceptedQty : Math.max(0, po.totalQty - dnQty))
@@ -4798,8 +4977,15 @@ export default function App() {
                             )}
                           </td>
                           <td className="py-3 px-4 font-mono whitespace-nowrap">
-                            <div className="font-semibold text-orange-600 dark:text-orange-400">
-                              {po.poNumber}
+                            <div className="font-semibold">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPoForDetails(po)}
+                                className="text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-mono font-semibold"
+                                title="Click to view full PO details"
+                              >
+                                {po.poNumber}
+                              </button>
                             </div>
                             <div className="text-[11px] text-slate-500">{po.orderDate}</div>
                           </td>
@@ -4939,7 +5125,16 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            )}
+              <Pagination
+                currentPage={currentPage}
+                totalItems={grnList.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setCurrentPage}
+                darkMode={darkMode}
+                itemLabel="GRN orders"
+              />
+            </>
+          )}
           </div>
         )}
 
@@ -4975,28 +5170,31 @@ export default function App() {
                   No products currently have DN discrepancies in GRN &amp; Inward. When a product is marked with a DN during Inward or GRN update, it will automatically appear here with the decreased price, accepted GRN, and adjusted payment.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr
-                        className={`border-b font-semibold ${
-                          darkMode
-                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                            : 'bg-slate-50 border-slate-200 text-slate-600'
-                        }`}
-                      >
-                        <th className="py-2.5 px-4 whitespace-nowrap">GRN Number &amp; Date</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">PO Number &amp; Date</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">Facility / Warehouse</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">Discrepancy Product (SKU | Name)</th>
-                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Quantity (Shipped ➔ DN ➔ Accepted)</th>
-                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Price Decreased &amp; Net Payment</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">DN Remarks / Reason</th>
-                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {grnDnList.map((po) => {
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr
+                          className={`border-b font-semibold ${
+                            darkMode
+                              ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                              : 'bg-slate-50 border-slate-200 text-slate-600'
+                          }`}
+                        >
+                          <th className="py-2.5 px-4 whitespace-nowrap">GRN Number &amp; Date</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">PO Number &amp; Date</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">Facility / Warehouse</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">Discrepancy Product (SKU | Name)</th>
+                          <th className="py-2.5 px-4 text-right whitespace-nowrap">Quantity (Shipped ➔ DN ➔ Accepted)</th>
+                          <th className="py-2.5 px-4 text-right whitespace-nowrap">Price Decreased &amp; Net Payment</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">DN Remarks / Reason</th>
+                          <th className="py-2.5 px-4 text-right whitespace-nowrap">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {grnDnList
+                          .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                          .map((po) => {
                         const dnQty = po.dnQty || 0;
                         const acceptedQty = typeof po.acceptedQty === 'number' ? po.acceptedQty : Math.max(0, po.totalQty - dnQty);
                         const paymentInfo = calculatePaymentDetails(po);
@@ -5017,8 +5215,15 @@ export default function App() {
                               <div className="text-[11px] text-slate-500">{po.grnDate || po.shipDate || '-'}</div>
                             </td>
                             <td className="py-2.5 px-4 font-mono whitespace-nowrap">
-                              <div className="font-bold text-orange-600 dark:text-orange-400">
-                                {po.poNumber}
+                              <div className="font-bold">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPoForDetails(po)}
+                                  className="text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-mono font-bold"
+                                  title="Click to view full PO details"
+                                >
+                                  {po.poNumber}
+                                </button>
                               </div>
                               <div className="text-[11px] text-slate-500">Order: {po.orderDate}</div>
                             </td>
@@ -5099,9 +5304,178 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
-              )}
+                <Pagination
+                  currentPage={currentPage}
+                  totalItems={grnDnList.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setCurrentPage}
+                  darkMode={darkMode}
+                  itemLabel="discrepancy items"
+                />
+              </>
+            )}
             </div>
 
+            {/* 2. Logged Discrepancy Notes (DN) Master Registry */}
+            <div
+              className={`rounded-xl border overflow-hidden ${
+                darkMode
+                  ? 'bg-slate-900 border-slate-800'
+                  : isGrey
+                  ? 'bg-zinc-100 border-zinc-300'
+                  : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-orange-500" />
+                    <span>
+                      Logged Discrepancy Notes ({dnRecords.length} DNs · Total Discrepancy Qty: {totalDnQty} Units)
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Official Discrepancy Notes (DN) logged across all Instamart warehouses and facilities with SKU breakdown and quantities.
+                  </p>
+                </div>
+                {canUserManageDn && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingDn(null);
+                      setPrefillDnFromPo(null);
+                      setIsDnModalOpen(true);
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Log New DN Note</span>
+                  </button>
+                )}
+              </div>
+
+              {filteredDnList.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500">
+                  No DN records found matching current search.
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr
+                          className={`border-b font-semibold ${
+                            darkMode
+                              ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                              : 'bg-slate-50 border-slate-200 text-slate-600'
+                          }`}
+                        >
+                          <th className="py-2.5 px-4 whitespace-nowrap">DN Date</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">DN Number</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">Facility / Warehouse</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">Parent PO &amp; Date</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">SKU ID &amp; Item Name</th>
+                          <th className="py-2.5 px-4 text-right whitespace-nowrap">DN Quantity</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">Discrepancy Reason</th>
+                          <th className="py-2.5 px-4 whitespace-nowrap">Carrier &amp; LR</th>
+                          <th className="py-2.5 px-4 text-right whitespace-nowrap">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {filteredDnList
+                          .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                          .map((dn) => {
+                        const matchingPo = purchaseOrders.find(
+                          (p) =>
+                            p.poNumber.toLowerCase() === dn.parentPoDetails.toLowerCase() ||
+                            dn.parentPoDetails.toLowerCase().includes(p.poNumber.toLowerCase())
+                        );
+
+                        return (
+                          <tr
+                            key={dn.id}
+                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          >
+                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">{dn.dnDate}</td>
+                            <td className="py-2.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
+                              {dn.dnNumber}
+                            </td>
+                            <td className="py-2.5 px-4 whitespace-nowrap font-medium">
+                              {dn.facilityName}
+                            </td>
+                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              {matchingPo ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPoForDetails(matchingPo)}
+                                  className="text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-bold"
+                                  title="Click to view full PO details"
+                                >
+                                  {dn.parentPoDetails}
+                                </button>
+                              ) : (
+                                <span>{dn.parentPoDetails}</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 max-w-[200px]">
+                              <div className="truncate font-medium">{dn.dnSkuIdItemName}</div>
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono font-bold tabular-nums text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                              {dn.dnQty} Units
+                            </td>
+                            <td className="py-2.5 px-4 max-w-[180px]">
+                              <div className="truncate text-slate-500" title={dn.whPocDetails || dn.dnReason}>
+                                {dn.whPocDetails || dn.dnReason || 'Discrepancy reported'}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-4 whitespace-nowrap font-mono text-[11px] text-slate-500">
+                              <div>{dn.carrierName || 'Transporter'}</div>
+                              <div>LR: {dn.lrNo || dn.carrierTrackingId || '-'}</div>
+                            </td>
+                            <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                              <div className="inline-flex items-center gap-1.5">
+                                {canUserManageDn && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingDn(dn);
+                                      setPrefillDnFromPo(null);
+                                      setIsDnModalOpen(true);
+                                    }}
+                                    className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer"
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                                {isAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => requestDeleteDn(dn)}
+                                    className="p-1 rounded border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
+                                    title="Delete DN"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <Pagination
+                  currentPage={currentPage}
+                  totalItems={filteredDnList.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setCurrentPage}
+                  darkMode={darkMode}
+                  itemLabel="DN notes"
+                />
+              </>
+            )}
+            </div>
           </div>
         )}
 
@@ -5182,28 +5556,31 @@ export default function App() {
                 )}
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr
-                      className={`border-b font-semibold ${
-                        darkMode
-                          ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <th className="py-3 px-4 whitespace-nowrap">Facility / Warehouse Name</th>
-                      <th className="py-3 px-4 whitespace-nowrap">City / Hub</th>
-                      <th className="py-3 px-4 whitespace-nowrap">POC Name</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Role / Designation</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Contact Number</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Official Email ID</th>
-                      <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
-                      <th className="py-3 px-4 text-right whitespace-nowrap">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                    {filteredPocList.map((poc) => (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr
+                        className={`border-b font-semibold ${
+                          darkMode
+                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <th className="py-3 px-4 whitespace-nowrap">Facility / Warehouse Name</th>
+                        <th className="py-3 px-4 whitespace-nowrap">City / Hub</th>
+                        <th className="py-3 px-4 whitespace-nowrap">POC Name</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Role / Designation</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Contact Number</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Official Email ID</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Updated By</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                      {filteredPocList
+                        .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                        .map((poc) => (
                       <tr
                         key={poc.id}
                         className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
@@ -5285,9 +5662,18 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            )}
-          </div>
-        )}
+              <Pagination
+                currentPage={currentPage}
+                totalItems={filteredPocList.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setCurrentPage}
+                darkMode={darkMode}
+                itemLabel="POC contacts"
+              />
+            </>
+          )}
+        </div>
+      )}
 
         {/* TAB 5: ADMIN MASTER CONTROLLER FOR ALL BACKOFFICE & ALL STAFF + AUDIT LOG */}
         {activeTab === 'ADMIN_AUDIT' && (
@@ -5599,62 +5985,75 @@ export default function App() {
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr
-                        className={`border-b font-semibold ${
-                          darkMode
-                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                            : 'bg-slate-50 border-slate-200 text-slate-600'
-                        }`}
-                      >
-                        <th className="py-3 px-4 whitespace-nowrap">Employee Name</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Employee ID</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Team Role</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Module</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Action</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Reference (PO / DN)</th>
-                        <th className="py-3 px-4">Audit Details</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {filteredLogs.map((log) => (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
                         <tr
-                          key={log.id}
-                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                          className={`border-b font-semibold ${
+                            darkMode
+                              ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                              : 'bg-slate-50 border-slate-200 text-slate-600'
+                          }`}
                         >
-                          <td className="py-3 px-4 font-bold whitespace-nowrap">
-                            {log.employeeName}
-                          </td>
-                          <td className="py-3 px-4 font-mono font-semibold text-orange-600 dark:text-orange-400 whitespace-nowrap">
-                            {log.employeeId}
-                          </td>
-                          <td className="py-3 px-4 uppercase font-mono text-[11px] whitespace-nowrap">
-                            {log.employeeRole}
-                          </td>
-                          <td className="py-3 px-4 font-mono text-[11px] whitespace-nowrap">
-                            {log.module}
-                          </td>
-                          <td className="py-3 px-4 font-semibold whitespace-nowrap">
-                            {log.action}
-                          </td>
-                          <td className="py-3 px-4 font-mono whitespace-nowrap">
-                            {log.referenceNo}
-                          </td>
-                          <td className="py-3 px-4 text-slate-600 dark:text-slate-300">
-                            {log.details}
-                          </td>
+                          <th className="py-3 px-4 whitespace-nowrap">Employee Name</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Employee ID</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Team Role</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Module</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Action</th>
+                          <th className="py-3 px-4 whitespace-nowrap">Reference (PO / DN)</th>
+                          <th className="py-3 px-4">Audit Details</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                        {filteredLogs
+                          .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                          .map((log) => (
+                            <tr
+                              key={log.id}
+                              className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                            >
+                              <td className="py-3 px-4 font-bold whitespace-nowrap">
+                                {log.employeeName}
+                              </td>
+                              <td className="py-3 px-4 font-mono font-semibold text-orange-600 dark:text-orange-400 whitespace-nowrap">
+                                {log.employeeId}
+                              </td>
+                              <td className="py-3 px-4 uppercase font-mono text-[11px] whitespace-nowrap">
+                                {log.employeeRole}
+                              </td>
+                              <td className="py-3 px-4 font-mono text-[11px] whitespace-nowrap">
+                                {log.module}
+                              </td>
+                              <td className="py-3 px-4 font-semibold whitespace-nowrap">
+                                {log.action}
+                              </td>
+                              <td className="py-3 px-4 font-mono whitespace-nowrap">
+                                {log.referenceNo}
+                              </td>
+                              <td className="py-3 px-4 text-slate-600 dark:text-slate-300">
+                                {log.details}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pagination
+                    currentPage={currentPage}
+                    totalItems={filteredLogs.length}
+                    pageSize={PAGE_SIZE}
+                    onPageChange={setCurrentPage}
+                    darkMode={darkMode}
+                    itemLabel="audit records"
+                  />
+                </>
               )}
             </div>
           </div>
         )}
       </main>
+      </div>
 
       {/* POC Contact Add / Edit Modal */}
       {isPocModalOpen && (

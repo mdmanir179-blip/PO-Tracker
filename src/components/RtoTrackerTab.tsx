@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   RotateCcw,
   Truck,
@@ -24,6 +24,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { PurchaseOrder, TeamRole } from '../types';
+import { Pagination } from './Pagination';
 
 interface RtoTrackerTabProps {
   rtoList: PurchaseOrder[];
@@ -57,10 +58,15 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
   userRole,
 }) => {
   const [filterTab, setFilterTab] = useState<'ALL' | 'PENDING' | 'PICKED' | 'RECEIVED'>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
   const [isInitiateModalOpen, setIsInitiateModalOpen] = useState(false);
   const [selectedPoId, setSelectedPoId] = useState('');
   const [selectedReason, setSelectedReason] = useState('Appointment Rejected / Gate Entry Denied');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterTab, searchQuery]);
 
   const canManage =
     userRole === 'admin' ||
@@ -339,29 +345,32 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr
-                  className={`border-b font-semibold ${
-                    darkMode
-                      ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                      : 'bg-slate-50 border-slate-200 text-slate-600'
-                  }`}
-                >
-                  <th className="py-3 px-4 whitespace-nowrap">PO Number & Date</th>
-                  <th className="py-3 px-4 whitespace-nowrap">Warehouse Destination</th>
-                  <th className="py-3 px-4 whitespace-nowrap">SKU & Total Qty</th>
-                  <th className="py-3 px-4 whitespace-nowrap">RTO Reason & Remarks</th>
-                  <th className="py-3 px-4 whitespace-nowrap">RTO Courier & Tracking ID</th>
-                  <th className="py-3 px-4 whitespace-nowrap">Pick Date</th>
-                  <th className="py-3 px-4 whitespace-nowrap text-center">RTO Picked Status</th>
-                  <th className="py-3 px-4 whitespace-nowrap text-center">Origin WH Received</th>
-                  <th className="py-3 px-4 whitespace-nowrap text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {filteredList.map((po) => {
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr
+                    className={`border-b font-semibold ${
+                      darkMode
+                        ? 'bg-slate-950/60 border-slate-800 text-slate-400'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <th className="py-3 px-4 whitespace-nowrap">PO Number & Date</th>
+                    <th className="py-3 px-4 whitespace-nowrap">Warehouse Destination</th>
+                    <th className="py-3 px-4 whitespace-nowrap">SKU & Total Qty</th>
+                    <th className="py-3 px-4 whitespace-nowrap">RTO Reason & Remarks</th>
+                    <th className="py-3 px-4 whitespace-nowrap">RTO Courier & Tracking ID</th>
+                    <th className="py-3 px-4 whitespace-nowrap">Pick Date</th>
+                    <th className="py-3 px-4 whitespace-nowrap text-center">RTO Picked Status</th>
+                    <th className="py-3 px-4 whitespace-nowrap text-center">Origin WH Received</th>
+                    <th className="py-3 px-4 whitespace-nowrap text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {filteredList
+                    .slice((currentPage - 1) * 10, currentPage * 10)
+                    .map((po) => {
                   const isPicked = po.rtoPickedStatus === 'YES';
                   const isPending = (po.rtoPickedStatus || 'PENDING') === 'PENDING';
                   const isWhReceived = po.rtoReceivedAtWh === 'YES';
@@ -590,8 +599,17 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+          <Pagination
+            currentPage={currentPage}
+            totalItems={filteredList.length}
+            pageSize={10}
+            onPageChange={setCurrentPage}
+            darkMode={darkMode}
+            itemLabel="RTO shipments"
+          />
+        </>
+      )}
+    </div>
 
       {/* Quick Initiate RTO Dialog */}
       {isInitiateModalOpen && (

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Boxes,
   Package,
@@ -23,9 +23,11 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { PurchaseOrder, PoLineItem, TeamRole } from '../types';
+import { Pagination } from './Pagination';
 
 export interface WarehouseBoxUpdatePayload {
   poId: string;
+  poNumber?: string;
   noOfBoxes: number;
   boxDimensions: string;
   lineItems: PoLineItem[];
@@ -33,6 +35,7 @@ export interface WarehouseBoxUpdatePayload {
 
 export interface WarehousePickupPayload {
   poId: string;
+  poNumber?: string;
   pickupStatus: 'YES' | 'NO';
   pickupTrackingId?: string;
   logisticsPortal?: string;
@@ -67,7 +70,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
   isGrey,
   userRole,
 }) => {
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING_PACKING' | 'READY_FOR_PICKUP' | 'PICKED_UP'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL_ACTIVE' | 'PENDING_PACKING' | 'READY_FOR_PICKUP' | 'PICKED_UP'>('ALL_ACTIVE');
   
   // Modal state for editing individual product box dimensions
   const [editingBoxPo, setEditingBoxPo] = useState<PurchaseOrder | null>(null);
@@ -85,68 +88,89 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
   const [pickupDate, setPickupDate] = useState('');
   const [pickupRemarks, setPickupRemarks] = useState('');
   const [isSavingPickup, setIsSavingPickup] = useState(false);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
-  // Filter purchase orders relevant to warehouse (PO_ENTRY and IN_TRANSIT)
-  const warehouseOrders = useMemo(() => {
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, searchQuery]);
+
+  // Active warehouse orders (automatically excludes already picked-up, GRN, and RTO orders)
+  const activeWarehouseOrders = useMemo(() => {
     return purchaseOrders.filter((po) => {
-      // Exclude GRN completed or RTO cancelled orders from daily packing workspace
       if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
+      // Auto-remove once marked as picked up
+      if (po.pickupStatus === 'YES') return false;
       return true;
+    });
+  }, [purchaseOrders]);
+
+  // Historical picked up orders
+  const pickedUpOrders = useMemo(() => {
+    return purchaseOrders.filter((po) => {
+      if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
+      return po.pickupStatus === 'YES';
     });
   }, [purchaseOrders]);
 
   // Compute metrics
   const metrics = useMemo(() => {
-    const total = warehouseOrders.length;
-    const pendingPacking = warehouseOrders.filter((po) => {
+    const totalActive = activeWarehouseOrders.length;
+    const pendingPacking = activeWarehouseOrders.filter((po) => {
       const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
-      return po.pickupStatus !== 'YES' && !hasDims;
+      return !hasDims;
     }).length;
-    const readyForPickup = warehouseOrders.filter((po) => {
+    const readyForPickup = activeWarehouseOrders.filter((po) => {
       const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
-      return po.pickupStatus !== 'YES' && hasDims;
+      return Boolean(hasDims);
     }).length;
-    const pickedUp = warehouseOrders.filter((po) => po.pickupStatus === 'YES').length;
-    return { total, pendingPacking, readyForPickup, pickedUp };
-  }, [warehouseOrders]);
+    const pickedUp = pickedUpOrders.length;
+    return { totalActive, pendingPacking, readyForPickup, pickedUp };
+  }, [activeWarehouseOrders, pickedUpOrders]);
 
-  // Filtered by search and status
+  // Filtered by search and status, sorted chronologically by shipment & appointment date
   const filteredOrders = useMemo(() => {
-    return warehouseOrders.filter((po) => {
-      // Filter tab
-      const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
-      if (statusFilter === 'PENDING_PACKING') {
-        if (po.pickupStatus === 'YES' || hasDims) return false;
-      } else if (statusFilter === 'READY_FOR_PICKUP') {
-        if (po.pickupStatus === 'YES' || !hasDims) return false;
-      } else if (statusFilter === 'PICKED_UP') {
-        if (po.pickupStatus !== 'YES') return false;
-      }
+    const sourceList = statusFilter === 'PICKED_UP' ? pickedUpOrders : activeWarehouseOrders;
 
-      // Search query
-      const q = searchQuery.toLowerCase().trim();
-      if (!q) return true;
+    return sourceList
+      .filter((po) => {
+        // Filter tab
+        const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
+        if (statusFilter === 'PENDING_PACKING') {
+          if (hasDims) return false;
+        } else if (statusFilter === 'READY_FOR_PICKUP') {
+          if (!hasDims) return false;
+        }
 
-      const itemsMatch = (po.lineItems || []).some(
-        (li) =>
-          li.itemId.toLowerCase().includes(q) ||
-          li.itemName.toLowerCase().includes(q) ||
-          (li.boxDimensions || '').toLowerCase().includes(q)
-      );
+        // Search query
+        const q = searchQuery.toLowerCase().trim();
+        if (!q) return true;
 
-      return (
-        po.poNumber.toLowerCase().includes(q) ||
-        po.warehouseName.toLowerCase().includes(q) ||
-        po.itemId.toLowerCase().includes(q) ||
-        po.itemName.toLowerCase().includes(q) ||
-        (po.boxDimensions || '').toLowerCase().includes(q) ||
-        (po.pickupTrackingId || '').toLowerCase().includes(q) ||
-        (po.puc || '').toLowerCase().includes(q) ||
-        (po.asn || '').toLowerCase().includes(q) ||
-        itemsMatch
-      );
-    });
-  }, [warehouseOrders, statusFilter, searchQuery]);
+        const itemsMatch = (po.lineItems || []).some(
+          (li) =>
+            li.itemId.toLowerCase().includes(q) ||
+            li.itemName.toLowerCase().includes(q) ||
+            (li.boxDimensions || '').toLowerCase().includes(q)
+        );
+
+        return (
+          po.poNumber.toLowerCase().includes(q) ||
+          po.warehouseName.toLowerCase().includes(q) ||
+          po.itemId.toLowerCase().includes(q) ||
+          po.itemName.toLowerCase().includes(q) ||
+          (po.boxDimensions || '').toLowerCase().includes(q) ||
+          (po.pickupTrackingId || '').toLowerCase().includes(q) ||
+          (po.puc || '').toLowerCase().includes(q) ||
+          (po.asn || '').toLowerCase().includes(q) ||
+          itemsMatch
+        );
+      })
+      .sort((a, b) => {
+        // Sort chronologically: earliest appointment date or shipment date first
+        const dateA = a.appointmentDate || a.shipDate || a.orderDate || '9999-99-99';
+        const dateB = b.appointmentDate || b.shipDate || b.orderDate || '9999-99-99';
+        return dateA.localeCompare(dateB);
+      });
+  }, [activeWarehouseOrders, pickedUpOrders, statusFilter, searchQuery]);
 
   // Open Edit Box Dimensions Modal
   const handleOpenBoxModal = (po: PurchaseOrder) => {
@@ -246,10 +270,10 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
           }`}
         >
           <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-semibold">Total Warehouse POs</span>
+            <span className="text-[11px] font-semibold">Active Warehouse POs</span>
             <Boxes className="w-4 h-4 text-orange-500" />
           </div>
-          <div className="text-xl font-bold font-mono">{metrics.total}</div>
+          <div className="text-xl font-bold font-mono">{metrics.totalActive}</div>
           <span className="text-[10px] text-slate-400">Packaging &amp; Dispatch Queue</span>
         </div>
 
@@ -261,7 +285,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
               ? 'bg-slate-900 border-slate-800 hover:border-amber-500/40'
               : 'bg-white border-slate-200 hover:border-amber-300'
           }`}
-          onClick={() => setStatusFilter(statusFilter === 'PENDING_PACKING' ? 'ALL' : 'PENDING_PACKING')}
+          onClick={() => setStatusFilter(statusFilter === 'PENDING_PACKING' ? 'ALL_ACTIVE' : 'PENDING_PACKING')}
         >
           <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 mb-1">
             <span className="text-[11px] font-semibold">Need Box Dimensions</span>
@@ -281,7 +305,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
               ? 'bg-slate-900 border-slate-800 hover:border-blue-500/40'
               : 'bg-white border-slate-200 hover:border-blue-300'
           }`}
-          onClick={() => setStatusFilter(statusFilter === 'READY_FOR_PICKUP' ? 'ALL' : 'READY_FOR_PICKUP')}
+          onClick={() => setStatusFilter(statusFilter === 'READY_FOR_PICKUP' ? 'ALL_ACTIVE' : 'READY_FOR_PICKUP')}
         >
           <div className="flex items-center justify-between text-blue-600 dark:text-blue-400 mb-1">
             <span className="text-[11px] font-semibold">Ready for Pickup</span>
@@ -301,7 +325,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
               ? 'bg-slate-900 border-slate-800 hover:border-emerald-500/40'
               : 'bg-white border-slate-200 hover:border-emerald-300'
           }`}
-          onClick={() => setStatusFilter(statusFilter === 'PICKED_UP' ? 'ALL' : 'PICKED_UP')}
+          onClick={() => setStatusFilter(statusFilter === 'PICKED_UP' ? 'ALL_ACTIVE' : 'PICKED_UP')}
         >
           <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 mb-1">
             <span className="text-[11px] font-semibold">Picked Up / Dispatched</span>
@@ -327,14 +351,14 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            onClick={() => setStatusFilter('ALL')}
+            onClick={() => setStatusFilter('ALL_ACTIVE')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-              statusFilter === 'ALL'
+              statusFilter === 'ALL_ACTIVE'
                 ? 'bg-orange-600 text-white shadow-xs'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            All Shipments ({metrics.total})
+            Active Warehouse ({metrics.totalActive})
           </button>
           <button
             type="button"
@@ -418,7 +442,8 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr
@@ -439,7 +464,9 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {filteredOrders.map((po) => {
+                {filteredOrders
+                  .slice((currentPage - 1) * 10, currentPage * 10)
+                  .map((po) => {
                   const lineItems =
                     Array.isArray(po.lineItems) && po.lineItems.length > 0
                       ? po.lineItems
@@ -614,7 +641,16 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
               </tbody>
             </table>
           </div>
-        )}
+          <Pagination
+            currentPage={currentPage}
+            totalItems={filteredOrders.length}
+            pageSize={10}
+            onPageChange={setCurrentPage}
+            darkMode={darkMode}
+            itemLabel="warehouse orders"
+          />
+        </>
+      )}
       </div>
 
       {/* MODAL 1: Update Individual Product Box Dimensions */}

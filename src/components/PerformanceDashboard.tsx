@@ -253,13 +253,39 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         ? (totalInwardHours / totalInwardSamples).toFixed(1)
         : '0.0';
 
+    const inTransitCount = purchaseOrders.filter((po) => {
+      const isRto =
+        po.isRto === true ||
+        po.workflowStage === 'RTO' ||
+        (po.status || '').toUpperCase() === 'RTO' ||
+        (po.status || '').toUpperCase().startsWith('RTO') ||
+        (po.status || '').toUpperCase().includes('RETURN TO ORIGIN');
+      if (isRto) return false;
+
+      const isGrn =
+        po.workflowStage === 'GRN' ||
+        po.inwardStatus === 'SUCCESS' ||
+        Boolean(po.grnNumber && po.grnNumber.trim()) ||
+        (po.status || '').toUpperCase().includes('GRN') ||
+        (po.status || '').toUpperCase().includes('DELIVERED');
+      if (isGrn) return false;
+
+      return (
+        po.workflowStage === 'IN_TRANSIT' ||
+        (po.pickupStatus === 'YES' && po.workflowStage !== 'PO_ENTRY')
+      );
+    }).length;
+
     const fulfillmentRate =
-      totalPos > 0 ? ((grnPos.length / totalPos) * 100).toFixed(1) : '0.0';
+      totalOrderQty > 0
+        ? Math.max(0, ((totalOrderQty - totalDnQty) / totalOrderQty) * 100).toFixed(1)
+        : '100.0';
 
     return {
       totalPos,
       totalOrderQty,
       totalDnQty,
+      inTransitCount,
       avgInwardHoursGlobal,
       fulfillmentRate,
       activeWarehouses: warehouseStats.length,
@@ -509,7 +535,7 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
 
       {/* KPI Strip */}
       <div
-        className={`grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 rounded-xl border ${
+        className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 p-4 rounded-xl border ${
           darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
         }`}
       >
@@ -525,7 +551,19 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
           </div>
         </div>
 
-        <div className="pr-4 lg:border-r border-slate-200 dark:border-slate-800">
+        <div className="pr-4 border-r border-slate-200 dark:border-slate-800">
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            In Transit Shipments
+          </div>
+          <div className="text-2xl font-bold font-mono tabular-nums mt-1 text-amber-600 dark:text-amber-400">
+            {overallMetrics.inTransitCount}
+          </div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            Active shipments synced with In Transit
+          </div>
+        </div>
+
+        <div className="pr-4 sm:border-r border-slate-200 dark:border-slate-800">
           <div className="text-xs text-slate-500 dark:text-slate-400">
             Average Inward Time
           </div>

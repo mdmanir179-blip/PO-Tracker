@@ -22,8 +22,8 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: '/',
-          name: 'Instamart POsHub Enterprise — PO, In-Transit, RTO, GRN & DN Tracker',
-          short_name: 'InstamartPOs',
+          name: 'Instamart POsHub',
+          short_name: 'Instamart POsHub',
           description:
             'Enterprise Instamart Purchase Order, In-Transit, RTO Management, GRN, and Discrepancy Note (DN) Control System.',
           theme_color: '#ea580c',
@@ -59,7 +59,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,html,png,svg}'],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         },
         devOptions: {
@@ -71,8 +71,12 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),
+        'react-is': path.resolve(import.meta.dirname, 'node_modules/react-is'),
       },
       dedupe: ['react', 'react-dom', 'react-is'],
+    },
+    optimizeDeps: {
+      include: ['react', 'react-dom', 'react-is', 'recharts'],
     },
     build: {
       chunkSizeWarningLimit: 3000,
