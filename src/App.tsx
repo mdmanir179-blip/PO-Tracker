@@ -44,6 +44,7 @@ import {
   BellRing,
   Calendar,
   ChevronRight,
+  ChevronLeft,
   WifiOff,
   Smartphone,
   CreditCard,
@@ -109,6 +110,9 @@ import {
   exportPoListToPdf,
   exportSinglePoToExcel,
   exportSinglePoToPdf,
+  exportDeliveryChallanPdf,
+  exportInvoicePdf,
+  exportPoCopyPdf,
   exportDnListToExcel,
   exportDnListToCsv,
   exportDnListToPdf,
@@ -174,6 +178,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('PO_ENTRY');
+  const [isSidebarVisible, setIsSidebarVisible] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const PAGE_SIZE = 10;
@@ -1075,6 +1080,80 @@ export default function App() {
     }
   };
 
+  // Print Team: Individual Document Verification (Delivery Challan, Tax Invoice, PO Copy)
+  const handleToggleDocVerify = async (
+    po: PurchaseOrder,
+    docType: 'dc' | 'invoice' | 'poCopy',
+    nextVal?: boolean
+  ) => {
+    if (!firebaseUser || !employeeProfile) return;
+    const poRef = doc(db, 'purchase_orders', po.id);
+    const key =
+      docType === 'dc'
+        ? 'dcVerified'
+        : docType === 'invoice'
+        ? 'invoiceVerified'
+        : 'poCopyVerified';
+    const currentVal = Boolean(po[key]);
+    const targetVal = typeof nextVal === 'boolean' ? nextVal : !currentVal;
+
+    const nextDc = docType === 'dc' ? targetVal : Boolean(po.dcVerified);
+    const nextInv = docType === 'invoice' ? targetVal : Boolean(po.invoiceVerified);
+    const nextPoCopy = docType === 'poCopy' ? targetVal : Boolean(po.poCopyVerified);
+    const allVerified = nextDc && nextInv && nextPoCopy;
+
+    try {
+      await updateDoc(poRef, {
+        [key]: targetVal,
+        printVerified: allVerified ? 'YES' : po.printVerified === 'YES' && !targetVal ? 'NO' : po.printVerified,
+        printVerifiedBy: allVerified
+          ? `${employeeProfile.employeeName} (${employeeProfile.employeeId})`.slice(0, 100)
+          : po.printVerifiedBy || '',
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        `Print Verification: ${docType.toUpperCase()} = ${targetVal ? 'YES' : 'NO'}`,
+        'PRINT_TEAM',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked ${docType.toUpperCase()} verification as ${
+          targetVal ? 'YES' : 'NO'
+        } for PO ${po.poNumber}.`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
+  // Backoffice / Admin: Confirm PO Entry and Move to Warehouse
+  const handleConfirmPoToWarehouse = async (po: PurchaseOrder) => {
+    if (!firebaseUser || !employeeProfile) return;
+    try {
+      await updateDoc(doc(db, 'purchase_orders', po.id), {
+        isConfirmed: true,
+        workflowStage: 'WAREHOUSE',
+        status: 'Confirmed - Sent to WH',
+        packagingStatus: 'PENDING',
+        confirmedByName: employeeProfile.employeeName.slice(0, 100),
+        confirmedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        'Confirmed PO → Sent to Warehouse',
+        'WAREHOUSE',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) confirmed PO ${po.poNumber} and sent it to Warehouse for packaging.`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
   // Create or Update Purchase Order
   const handleSavePo = async (values: PoFormValues) => {
     if (!firebaseUser || !employeeProfile) return;
@@ -1114,13 +1193,31 @@ export default function App() {
       editingPo?.isRto === true ||
       (values.status || '').toUpperCase().startsWith('RTO');
 
-    const newStage: PurchaseOrder['workflowStage'] = isAlreadyGrn
-      ? 'GRN'
-      : isAlreadyRto
-      ? 'RTO'
-      : values.pickupStatus === 'YES'
-      ? 'IN_TRANSIT'
-      : 'PO_ENTRY';
+    let newStage: PurchaseOrder['workflowStage'] = 'PO_ENTRY';
+    if (isAlreadyGrn) {
+      newStage = 'GRN';
+    } else if (isAlreadyRto) {
+      newStage = 'RTO';
+    } else if (values.pickupStatus === 'YES') {
+      newStage = 'IN_TRANSIT';
+    } else if (values.targetStage) {
+      newStage = values.targetStage;
+    } else if (values.isConfirmed) {
+      newStage = 'WAREHOUSE';
+    } else if (editingPo?.workflowStage) {
+      newStage = editingPo.workflowStage;
+    }
+
+    const isConfirmedOrder =
+      values.isConfirmed !== undefined
+        ? values.isConfirmed
+        : newStage === 'WAREHOUSE' ||
+          newStage === 'PRINT_LOGISTICS' ||
+          newStage === 'IN_TRANSIT' ||
+          newStage === 'GRN' ||
+          newStage === 'RTO'
+        ? true
+        : Boolean(editingPo?.isConfirmed);
 
     if (editingPo) {
       const poRef = doc(db, 'purchase_orders', editingPo.id);
@@ -1141,6 +1238,8 @@ export default function App() {
         status:
           values.pickupStatus === 'YES' && editingPo.workflowStage === 'PO_ENTRY'
             ? 'In Transit'
+            : newStage === 'WAREHOUSE' && (!editingPo.status || editingPo.status === 'Draft' || editingPo.status === 'New PO Created')
+            ? 'Confirmed - Sent to WH'
             : values.status.trim().slice(0, 60),
         noOfBoxes: Number(values.noOfBoxes) || 0,
         boxDimensions: values.boxDimensions.trim().slice(0, 100),
@@ -1151,6 +1250,17 @@ export default function App() {
         clearBagNo: values.clearBagNo.trim().slice(0, 80),
         comment: values.comment.trim().slice(0, 500),
         pickupStatus: values.pickupStatus,
+        isConfirmed: isConfirmedOrder,
+        packagingStatus:
+          newStage === 'PRINT_LOGISTICS'
+            ? 'READY'
+            : editingPo.packagingStatus || 'PENDING',
+        confirmedByName: isConfirmedOrder
+          ? editingPo.confirmedByName || employeeProfile.employeeName
+          : '',
+        confirmedByEmpId: isConfirmedOrder
+          ? editingPo.confirmedByEmpId || employeeProfile.employeeId
+          : '',
         workflowStage: newStage as PurchaseOrder['workflowStage'],
         totalAmount:
           typeof values.totalAmount === 'number'
@@ -1233,6 +1343,8 @@ export default function App() {
         status:
           values.pickupStatus === 'YES'
             ? 'In Transit'
+            : newStage === 'WAREHOUSE'
+            ? 'Confirmed - Sent to WH'
             : values.status.trim().slice(0, 60),
         noOfBoxes: Number(values.noOfBoxes) || 0,
         boxDimensions: values.boxDimensions.trim().slice(0, 100),
@@ -1243,9 +1355,16 @@ export default function App() {
         clearBagNo: values.clearBagNo.trim().slice(0, 80),
         comment: values.comment.trim().slice(0, 500),
         pickupStatus: values.pickupStatus,
+        isConfirmed: isConfirmedOrder,
+        packagingStatus: newStage === 'PRINT_LOGISTICS' ? 'READY' : 'PENDING',
+        confirmedByName: isConfirmedOrder ? employeeProfile.employeeName : '',
+        confirmedByEmpId: isConfirmedOrder ? employeeProfile.employeeId : '',
+        dcVerified: false,
+        invoiceVerified: false,
+        poCopyVerified: false,
         printVerified: 'NO',
         printVerifiedBy: '',
-        workflowStage: values.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PO_ENTRY',
+        workflowStage: newStage as PurchaseOrder['workflowStage'],
         inwardStatus: 'PENDING',
         grnNumber: '',
         grnDnSummary: '',
@@ -1379,24 +1498,62 @@ export default function App() {
     }
   };
 
-  // Warehouse: Update Box Dimensions & Line Items Packaging
+  // Warehouse: Update Box Dimensions & Line Items Packaging (Moves to Print & Logistics when markReady is true)
   const handleWarehouseUpdateBoxDimensions = async (payload: WarehouseBoxUpdatePayload) => {
     if (!firebaseUser || !employeeProfile) return;
     try {
-      await updateDoc(doc(db, 'purchase_orders', payload.poId), {
+      const updateData: any = {
         noOfBoxes: payload.noOfBoxes,
         boxDimensions: payload.boxDimensions,
         lineItems: payload.lineItems,
         updatedAt: serverTimestamp(),
-      });
+      };
+      if (payload.markReady) {
+        updateData.workflowStage = 'PRINT_LOGISTICS';
+        updateData.packagingStatus = 'READY';
+        updateData.status = 'Packed - Ready for Pickup';
+      }
+      await updateDoc(doc(db, 'purchase_orders', payload.poId), updateData);
       await recordActivity(
-        'Updated Box Dimensions & Packaging',
+        payload.markReady
+          ? 'Packaging Complete → Moved to Print & Logistics'
+          : 'Updated Box Dimensions & Packaging',
         'WAREHOUSE',
         payload.poNumber || payload.poId,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${payload.boxDimensions}) & ${payload.noOfBoxes} boxes for PO ${payload.poNumber || payload.poId}.`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${payload.boxDimensions}) & ${payload.noOfBoxes} boxes for PO ${
+          payload.poNumber || payload.poId
+        }${
+          payload.markReady
+            ? ' and marked packaging complete (Moved to Print & Logistics).'
+            : '.'
+        }`
       );
     } catch (err: any) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${payload.poId}`);
+    }
+  };
+
+  // Warehouse: Mark Packaging Complete & Move to Print & Logistics
+  const handleWarehouseMarkPackagingReady = async (po: PurchaseOrder) => {
+    if (!firebaseUser || !employeeProfile) return;
+    try {
+      await updateDoc(doc(db, 'purchase_orders', po.id), {
+        workflowStage: 'PRINT_LOGISTICS',
+        packagingStatus: 'READY',
+        status: 'Packed - Ready for Pickup',
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      });
+      await recordActivity(
+        'Packaging Complete → Moved to Print & Logistics',
+        'WAREHOUSE',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked packaging ready for PO ${po.poNumber}. Transferred to Print Team & Logistics.`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
     }
   };
 
@@ -2482,6 +2639,8 @@ export default function App() {
     return purchaseOrders.filter((po) => {
       if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
       if (po.pickupStatus === 'YES') return false;
+      if (po.workflowStage === 'PO_ENTRY' && !po.isConfirmed) return false;
+      if (po.packagingStatus === 'READY' || po.workflowStage === 'PRINT_LOGISTICS') return false;
       return true;
     }).length;
   }, [purchaseOrders]);
@@ -2633,8 +2792,8 @@ export default function App() {
     },
     {
       id: 'DN_TRACKER',
-      label: `04. DN Tracker (${dnRecords.length} DNs · ${totalDnQty} Qty)`,
-      shortLabel: `DN (${dnRecords.length})`,
+      label: `Instamart DN Tracker (${dnRecords.length} DNs · ${totalDnQty} Total Qty)`,
+      shortLabel: `DN (${totalDnQty} Qty)`,
       badge: dnRecords.length,
       icon: <FileText className="w-4 h-4 shrink-0 text-rose-500" />,
     },
@@ -2678,7 +2837,9 @@ export default function App() {
       {/* 1. LEFT SIDEBAR NAVIGATION (Desktop & Tablet >= lg)      */}
       {/* ======================================================== */}
       <aside
-        className={`hidden lg:flex flex-col w-64 xl:w-72 shrink-0 h-screen sticky top-0 z-40 border-r select-none ${
+        className={`${
+          isSidebarVisible ? 'hidden lg:flex' : 'hidden'
+        } flex-col w-64 xl:w-72 shrink-0 h-screen sticky top-0 z-40 border-r select-none transition-all duration-200 ${
           darkMode
             ? 'bg-slate-900 border-slate-800 text-slate-200'
             : isGrey
@@ -2686,13 +2847,21 @@ export default function App() {
             : 'bg-white border-slate-200 text-slate-800'
         }`}
       >
-        {/* Sidebar Header: Brand Logo */}
-        <div className="p-4 border-b border-slate-200 dark:border-slate-800">
+        {/* Sidebar Header: Brand Logo & Toggle Button */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <BrandLogo
             size="md"
             showSubtitle={true}
             subtitleText="PO · In-Transit · RTO · GRN · DN Ops"
           />
+          <button
+            type="button"
+            onClick={() => setIsSidebarVisible(false)}
+            className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer transition-colors"
+            title="Hide Menu Bar"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
         </div>
 
         {/* User Identity Pill */}
@@ -2841,6 +3010,17 @@ export default function App() {
             <div className="lg:hidden">
               <BrandLogo size="sm" showSubtitle={false} />
             </div>
+
+            {/* Desktop Menu Bar Toggle Button */}
+            <button
+              type="button"
+              onClick={() => setIsSidebarVisible((prev) => !prev)}
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer transition-colors shadow-xs active:scale-95"
+              title={isSidebarVisible ? 'Hide Menu Bar' : 'Show Menu Bar'}
+            >
+              <Menu className="w-3.5 h-3.5 text-orange-500" />
+              <span>{isSidebarVisible ? 'Hide Menu' : 'Show Menu'}</span>
+            </button>
 
             {/* Desktop Workspace Title & Breadcrumb */}
             <div className="hidden lg:flex items-center gap-2">
@@ -3888,6 +4068,17 @@ export default function App() {
                           </td>
                           <td className="py-3 px-4 text-right whitespace-nowrap">
                             <div className="inline-flex items-center gap-1.5">
+                              {(canUserEditPo || isAdmin) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleConfirmPoToWarehouse(po)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer shadow-xs active:scale-95"
+                                  title="Confirm PO and move to Warehouse packaging"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Confirm to WH</span>
+                                </button>
+                              )}
                               {(canUserEditPo || canUserManageLogistics) && (
                                 <button
                                   type="button"
@@ -3940,6 +4131,8 @@ export default function App() {
             onSearchChange={setSearchQuery}
             onUpdateBoxDimensions={handleWarehouseUpdateBoxDimensions}
             onMarkPickup={handleWarehouseMarkPickup}
+            onMarkPackagingReady={handleWarehouseMarkPackagingReady}
+            onDeletePo={requestDeletePo}
             onViewPoDetails={(po) => setSelectedPoForDetails(po)}
             onEditPo={(po) => {
               setEditingPo(po);
@@ -3948,6 +4141,7 @@ export default function App() {
             darkMode={darkMode}
             isGrey={isGrey}
             userRole={employeeProfile.role}
+            isAdmin={isAdmin}
           />
         )}
 
@@ -4269,6 +4463,16 @@ export default function App() {
                                     <span>RTO</span>
                                   </button>
                                 )}
+                                {isAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => requestDeletePo(po)}
+                                    className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
+                                    title="Admin Delete PO"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -4416,105 +4620,212 @@ export default function App() {
                       >
                         <th className="py-3 px-4 whitespace-nowrap">PO Number</th>
                         <th className="py-3 px-4 whitespace-nowrap">Warehouse</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Item ID & Name</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Item ID &amp; Name</th>
                         <th className="py-3 px-4 text-right whitespace-nowrap">Total Qty</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Invoice & ASN</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Document Verification Checklist</th>
                         <th className="py-3 px-4 whitespace-nowrap">Print Verified Status</th>
-                        <th className="py-3 px-4 whitespace-nowrap">Verified By</th>
-                        <th className="py-3 px-4 text-right whitespace-nowrap">Print & Verify Actions</th>
+                        <th className="py-3 px-4 whitespace-nowrap">Print Documents (PDF / Excel)</th>
+                        <th className="py-3 px-4 text-right whitespace-nowrap">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                       {printTeamList
                         .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-                        .map((po) => (
-                      <tr
-                        key={po.id}
-                        className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
-                      >
-                        <td className="py-3 px-4 font-mono whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPoForDetails(po)}
-                            className="font-bold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-mono"
-                            title="Click to view full PO details"
-                          >
-                            {po.poNumber}
-                          </button>
-                        </td>
-                        <td className="py-3 px-4 whitespace-nowrap font-medium">
-                          {po.warehouseName}
-                        </td>
-                        <td className="py-3 px-4 min-w-[200px]">
-                          <div className="font-mono text-[11px] text-slate-500">{po.itemId}</div>
-                          <div className="font-medium truncate max-w-[220px]">{po.itemName}</div>
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono font-bold tabular-nums">
-                          {po.totalQty}
-                        </td>
-                        <td className="py-3 px-4 font-mono whitespace-nowrap">
-                          <div>Inv: {po.invoiceNo || '-'}</div>
-                          <div className="text-[11px] text-slate-500">ASN: {po.asn || '-'}</div>
-                        </td>
-                        <td className="py-3 px-4 whitespace-nowrap">
-                          {po.printVerified === 'YES' ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>VERIFIED (YES)</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[11px]">
-                              <XCircle className="w-3.5 h-3.5" />
-                              <span>PENDING (NO)</span>
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 px-4 whitespace-nowrap text-slate-500">
-                          {po.printVerifiedBy || '-'}
-                        </td>
-                        <td className="py-3 px-4 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center gap-1.5">
-                            {canUserVerifyPrint && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleTogglePrintVerify(
-                                    po,
-                                    po.printVerified === 'YES' ? 'NO' : 'YES'
-                                  )
-                                }
-                                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-                                  po.printVerified === 'YES'
-                                    ? 'border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
-                                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                                }`}
-                              >
-                                {po.printVerified === 'YES' ? 'Mark Unverified' : 'Verify Print: YES'}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => exportSinglePoToPdf(po)}
-                              className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        .map((po) => {
+                          const isDcOk = Boolean(po.dcVerified);
+                          const isInvOk = Boolean(po.invoiceVerified);
+                          const isPoCopyOk = Boolean(po.poCopyVerified);
+                          const isAllVerified = po.printVerified === 'YES';
+
+                          return (
+                            <tr
+                              key={po.id}
+                              className={`transition-colors ${
+                                !isAllVerified
+                                  ? darkMode
+                                    ? 'bg-amber-500/5 hover:bg-amber-500/10'
+                                    : 'bg-amber-50/50 hover:bg-amber-50'
+                                  : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
+                              }`}
                             >
-                              <Printer className="w-3.5 h-3.5 text-red-500" />
-                              <span>PDF Slip</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => exportSinglePoToExcel(po)}
-                              className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" />
-                              <span>Excel</span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                              <td className="py-3 px-4 font-mono whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPoForDetails(po)}
+                                  className="font-bold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-mono"
+                                  title="Click to view full PO details"
+                                >
+                                  {po.poNumber}
+                                </button>
+                                <div className="text-[10px] text-slate-400 font-sans">
+                                  Stage: {po.workflowStage}
+                                </div>
+                              </td>
+                              <td className="py-3 px-4 whitespace-nowrap font-medium">
+                                {po.warehouseName}
+                              </td>
+                              <td className="py-3 px-4 min-w-[180px]">
+                                <div className="font-mono text-[11px] text-slate-500">{po.itemId}</div>
+                                <div className="font-medium truncate max-w-[200px]">{po.itemName}</div>
+                              </td>
+                              <td className="py-3 px-4 text-right font-mono font-bold tabular-nums">
+                                {po.totalQty}
+                              </td>
+
+                              {/* Document Verification Checklist: Challan, Invoice, PO Copy */}
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                <div className="flex flex-col gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleDocVerify(po, 'dc')}
+                                    className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                      isDcOk
+                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                        : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
+                                    }`}
+                                    title="Click to toggle Delivery Challan verification"
+                                  >
+                                    {isDcOk ? (
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                    ) : (
+                                      <span className="w-3.5 h-3.5 rounded-full border border-slate-400 shrink-0" />
+                                    )}
+                                    <span>Delivery Challan</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleDocVerify(po, 'invoice')}
+                                    className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                      isInvOk
+                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                        : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
+                                    }`}
+                                    title="Click to toggle Tax Invoice verification"
+                                  >
+                                    {isInvOk ? (
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                    ) : (
+                                      <span className="w-3.5 h-3.5 rounded-full border border-slate-400 shrink-0" />
+                                    )}
+                                    <span>Tax Invoice</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleDocVerify(po, 'poCopy')}
+                                    className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                      isPoCopyOk
+                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                        : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
+                                    }`}
+                                    title="Click to toggle PO Copy verification"
+                                  >
+                                    {isPoCopyOk ? (
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                    ) : (
+                                      <span className="w-3.5 h-3.5 rounded-full border border-slate-400 shrink-0" />
+                                    )}
+                                    <span>PO Copy</span>
+                                  </button>
+                                </div>
+                              </td>
+
+                              {/* Overall Print Verified Status */}
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                {isAllVerified ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>VERIFIED (YES)</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[11px]">
+                                    <XCircle className="w-3.5 h-3.5" />
+                                    <span>PENDING (NO)</span>
+                                  </span>
+                                )}
+                                <div className="text-[10px] text-slate-400 mt-1">
+                                  {po.printVerifiedBy ? `By: ${po.printVerifiedBy}` : 'Pending Check'}
+                                </div>
+                              </td>
+
+                              {/* Print Documents (Challan, Invoice, PO Copy) */}
+                              <td className="py-3 px-4 whitespace-nowrap">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => exportDeliveryChallanPdf(po)}
+                                    className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-orange-50 dark:hover:bg-orange-950/30 text-orange-600 dark:text-orange-400 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                    title="Download Triplicate Delivery Challan (PDF)"
+                                  >
+                                    <Printer className="w-3 h-3 text-orange-500" />
+                                    <span>Challan</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => exportInvoicePdf(po)}
+                                    className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                    title="Download Tax Invoice (PDF)"
+                                  >
+                                    <FileText className="w-3 h-3 text-emerald-500" />
+                                    <span>Invoice</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => exportPoCopyPdf(po)}
+                                    className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-blue-50 dark:hover:bg-blue-950/30 text-blue-600 dark:text-blue-400 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                    title="Download Complete PO Copy (PDF)"
+                                  >
+                                    <FileSpreadsheet className="w-3 h-3 text-blue-500" />
+                                    <span>PO Copy</span>
+                                  </button>
+                                </div>
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-3 px-4 text-right whitespace-nowrap">
+                                <div className="inline-flex items-center gap-1.5">
+                                  {canUserVerifyPrint && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleTogglePrintVerify(
+                                          po,
+                                          po.printVerified === 'YES' ? 'NO' : 'YES'
+                                        )
+                                      }
+                                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer shadow-xs active:scale-95 ${
+                                        po.printVerified === 'YES'
+                                          ? 'border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
+                                          : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                      }`}
+                                    >
+                                      {po.printVerified === 'YES'
+                                        ? 'Mark Unverified'
+                                        : '✓ Verify All'}
+                                    </button>
+                                  )}
+
+                                  {isAdmin && (
+                                    <button
+                                      type="button"
+                                      onClick={() => requestDeletePo(po)}
+                                      className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
+                                      title="Admin Delete PO"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
               <Pagination
                 currentPage={currentPage}
                 totalItems={printTeamList.length}
@@ -4893,6 +5204,8 @@ export default function App() {
               setIsPoModalOpen(true);
             }}
             onViewPoDetails={(po) => setSelectedPoForDetails(po)}
+            onDeletePo={requestDeletePo}
+            isAdmin={isAdmin}
             darkMode={darkMode}
             isGrey={isGrey}
             userRole={employeeProfile.role}
@@ -5141,6 +5454,49 @@ export default function App() {
         {/* TAB 4: INSTAMART DN TRACKER (AUTOMATICALLY SHOWS GRN DISCREPANCY PRODUCTS + IN-TRANSIT + LOGGED DN RECORDS) */}
         {activeTab === 'DN_TRACKER' && (
           <div className="space-y-6">
+            {/* Prominent Header Banner with Quantity & Count */}
+            <div
+              className={`p-4 sm:p-5 rounded-xl border flex flex-wrap items-center justify-between gap-4 ${
+                darkMode
+                  ? 'bg-gradient-to-r from-slate-900 via-rose-950/20 to-slate-900 border-rose-900/30'
+                  : 'bg-gradient-to-r from-rose-50 via-orange-50 to-amber-50 border-rose-200'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                  <FileText className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>Instamart DN Tracker</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold">
+                      {dnRecords.length} DN Notes
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Official Discrepancy Note Ledger · Tracking Discrepancy Quantities across all Instamart Warehouses
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 sm:gap-6">
+                <div className="text-right">
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Logged DN Records</div>
+                  <div className="text-xl sm:text-2xl font-bold font-mono text-slate-900 dark:text-white">
+                    {dnRecords.length} <span className="text-xs font-normal text-slate-400">DNs</span>
+                  </div>
+                </div>
+                <div className="h-10 w-px bg-slate-300 dark:bg-slate-700" />
+                <div className="text-right">
+                  <div className="text-xs text-rose-600 dark:text-rose-400 font-bold uppercase tracking-wider">
+                    Total Discrepancy Quantity
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-rose-600 dark:text-rose-400">
+                    {totalDnQty} <span className="text-xs font-semibold">Units</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* 1. Automatic GRN & Inward Discrepancy Products Feed in DN Tab */}
             <div
               className={`rounded-xl border overflow-hidden ${

@@ -22,6 +22,7 @@ import {
   ExternalLink,
   ChevronRight,
   ArrowRight,
+  Trash2,
 } from 'lucide-react';
 import { PurchaseOrder, TeamRole } from '../types';
 import { Pagination } from './Pagination';
@@ -37,6 +38,8 @@ interface RtoTrackerTabProps {
   onRevertFromRto: (po: PurchaseOrder) => Promise<void>;
   onEditPo: (po: PurchaseOrder) => void;
   onViewPoDetails?: (po: PurchaseOrder) => void;
+  onDeletePo?: (po: PurchaseOrder) => void;
+  isAdmin?: boolean;
   darkMode: boolean;
   isGrey: boolean;
   userRole: TeamRole;
@@ -53,6 +56,8 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
   onRevertFromRto,
   onEditPo,
   onViewPoDetails,
+  onDeletePo,
+  isAdmin,
   darkMode,
   isGrey,
   userRole,
@@ -589,6 +594,17 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
                               title="Revert / Remove from RTO"
                             >
                               Revert
+                            </button>
+                          )}
+
+                          {isAdmin && onDeletePo && (
+                            <button
+                              type="button"
+                              onClick={() => onDeletePo(po)}
+                              className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
+                              title="Admin Delete RTO Record"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
                         </div>

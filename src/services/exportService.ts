@@ -499,6 +499,270 @@ export function exportSinglePoToPdf(po: PurchaseOrder) {
   doc.save(`Instamart_PO_${po.poNumber}_Document.pdf`);
 }
 
+// Dedicated Delivery Challan (DC) Document for Print Team
+export function exportDeliveryChallanPdf(po: PurchaseOrder) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const primaryOrange: [number, number, number] = [234, 88, 12];
+  const darkNavy: [number, number, number] = [15, 23, 42];
+
+  // Header Banner
+  doc.setFillColor(...primaryOrange);
+  doc.rect(40, 30, 515, 36, 'F');
+  doc.setFontSize(14);
+  doc.setTextColor(255);
+  doc.setFont('helvetica', 'bold');
+  doc.text('INSTAMART DELIVERY CHALLAN (DISPATCH & GATE INWARD)', 50, 53);
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100);
+  doc.text('TRIPLICATE: 1. Warehouse Inward Copy | 2. Transporter AWB Copy | 3. Origin Hub Office Copy', 40, 80);
+
+  // Meta Table: Challan & Shipment Data
+  const dcNo = po.invoiceNo ? `DC-INV-${po.invoiceNo}` : `DC-${po.poNumber}`;
+  const dcDate = po.shipDate || po.orderDate || new Date().toISOString().slice(0, 10);
+  const meta = [
+    ['Challan Number', dcNo, 'Challan Date', dcDate],
+    ['Purchase Order (PO)', po.poNumber, 'Order Date', po.orderDate],
+    ['Destination Warehouse', po.warehouseName, 'Appointment ID / Date', `${po.appointmentId || '-'} (${po.appointmentDate || '-'})`],
+    ['Logistics Transporter', po.logisticsPortal || 'Authorized Carrier', 'Pickup Tracking / AWB', po.pickupTrackingId || '-'],
+    ['Total Packages / Boxes', `${po.noOfBoxes || 1} Box(es)`, 'Box Dimensions', po.boxDimensions || 'Standard Box'],
+    ['ASN Number', po.asn || '-', 'Clear Bag / Seal No.', po.clearBagNo || '-'],
+  ];
+
+  autoTable(doc, {
+    startY: 90,
+    head: [['Challan Parameter', 'Details', 'Logistics Parameter', 'Details']],
+    body: meta,
+    styles: { fontSize: 8.5, cellPadding: 4.5 },
+    headStyles: { fillColor: darkNavy, textColor: 255 },
+  });
+
+  const lines =
+    Array.isArray(po.lineItems) && po.lineItems.length > 0
+      ? po.lineItems
+      : [{ itemId: po.itemId, itemName: po.itemName, qty: po.totalQty, boxDimensions: po.boxDimensions, noOfBoxes: po.noOfBoxes }];
+
+  const afterMetaY = (doc as any).lastAutoTable?.finalY || 200;
+  doc.setFontSize(11);
+  doc.setTextColor(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Dispatch SKU Consignment Breakdown (Total Units: ${po.totalQty})`, 40, afterMetaY + 22);
+
+  autoTable(doc, {
+    startY: afterMetaY + 30,
+    head: [['#', 'Item SKU ID', 'Product Description', 'Pack Box Dims', 'Boxes', 'Dispatch Qty']],
+    body: lines.map((li, i) => [
+      String(i + 1),
+      li.itemId,
+      li.itemName,
+      li.boxDimensions || po.boxDimensions || '-',
+      String(li.noOfBoxes || 1),
+      String(li.qty),
+    ]),
+    styles: { fontSize: 8.5, cellPadding: 5 },
+    headStyles: { fillColor: primaryOrange, textColor: 255 },
+  });
+
+  const afterItemsY = (doc as any).lastAutoTable?.finalY || 350;
+
+  // Declarations & Signatures Section
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(80);
+  doc.text(
+    'Declaration: Certified that the goods described above are dispatched in good condition and packed as per Instamart packaging norms.',
+    40,
+    afterItemsY + 24
+  );
+
+  const sigY = afterItemsY + 65;
+  doc.setDrawColor(180);
+  doc.line(40, sigY, 180, sigY);
+  doc.line(220, sigY, 360, sigY);
+  doc.line(400, sigY, 540, sigY);
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(50);
+  doc.text('Prepared & Packed By', 50, sigY + 12);
+  doc.text('Driver / Carrier Signature', 230, sigY + 12);
+  doc.text('Warehouse Gate Receiver Stamp', 405, sigY + 12);
+
+  doc.save(`Delivery_Challan_${po.poNumber}.pdf`);
+}
+
+// Dedicated Tax Invoice Document for Print Team
+export function exportInvoicePdf(po: PurchaseOrder) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const primaryOrange: [number, number, number] = [234, 88, 12];
+  const darkNavy: [number, number, number] = [15, 23, 42];
+
+  // Header
+  doc.setFillColor(...darkNavy);
+  doc.rect(40, 30, 515, 36, 'F');
+  doc.setFontSize(14);
+  doc.setTextColor(255);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TAX INVOICE — INSTAMART COMMERCIAL DISPATCH', 50, 53);
+
+  const invNo = po.invoiceNo || `INV-${po.poNumber}`;
+  const invDate = po.orderDate || new Date().toISOString().slice(0, 10);
+
+  const meta = [
+    ['Invoice Number', invNo, 'Invoice Date', invDate],
+    ['Purchase Order Ref', po.poNumber, 'Order Date', po.orderDate],
+    ['Billed / Shipped To', `Instamart Hub: ${po.warehouseName}`, 'Warehouse Appt ID', po.appointmentId || '-'],
+    ['Appointment Date', po.appointmentDate || '-', 'Sales Order (SO)', po.so || '-'],
+    ['Logistics Partner', po.logisticsPortal || '-', 'AWB / Tracking ID', po.pickupTrackingId || '-'],
+    ['Payment Due Terms', 'Net 30 Days (Standard Term)', 'Payment Status', po.paymentStatus || 'PENDING'],
+  ];
+
+  autoTable(doc, {
+    startY: 85,
+    head: [['Invoice Field', 'Details', 'Supply Reference', 'Details']],
+    body: meta,
+    styles: { fontSize: 8.5, cellPadding: 4.5 },
+    headStyles: { fillColor: darkNavy, textColor: 255 },
+  });
+
+  const lines =
+    Array.isArray(po.lineItems) && po.lineItems.length > 0
+      ? po.lineItems
+      : [{ itemId: po.itemId, itemName: po.itemName, qty: po.totalQty }];
+
+  const totalAmount = po.totalAmount && po.totalAmount > 0 ? po.totalAmount : po.totalQty * 320;
+  const unitRate = lines.length > 0 && po.totalQty > 0 ? (totalAmount / po.totalQty).toFixed(2) : '320.00';
+
+  const afterMetaY = (doc as any).lastAutoTable?.finalY || 200;
+  doc.setFontSize(11);
+  doc.setTextColor(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Taxable Goods & Value Summary (PO #${po.poNumber})`, 40, afterMetaY + 22);
+
+  autoTable(doc, {
+    startY: afterMetaY + 30,
+    head: [['#', 'Item SKU ID', 'Product Description', 'HSN Code', 'Qty', 'Unit Rate (₹)', 'Taxable Amount (₹)']],
+    body: lines.map((li, i) => {
+      const lineTotal = (li.qty * Number(unitRate)).toFixed(2);
+      return [
+        String(i + 1),
+        li.itemId,
+        li.itemName,
+        '21069099',
+        String(li.qty),
+        `₹${unitRate}`,
+        `₹${Number(lineTotal).toLocaleString('en-IN')}`,
+      ];
+    }),
+    styles: { fontSize: 8.5, cellPadding: 5 },
+    headStyles: { fillColor: primaryOrange, textColor: 255 },
+  });
+
+  const afterItemsY = (doc as any).lastAutoTable?.finalY || 350;
+
+  // Grand Total Summary Box
+  doc.setFillColor(248, 250, 252);
+  doc.rect(340, afterItemsY + 15, 215, 60, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.rect(340, afterItemsY + 15, 215, 60, 'S');
+
+  doc.setFontSize(9);
+  doc.setTextColor(80);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Total PO Quantity:', 350, afterItemsY + 32);
+  doc.text(`${po.totalQty} Units`, 470, afterItemsY + 32);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text('Grand Invoice Total:', 350, afterItemsY + 55);
+  doc.setFontSize(12);
+  doc.setTextColor(234, 88, 12);
+  doc.text(`₹${Number(totalAmount).toLocaleString('en-IN')}`, 465, afterItemsY + 55);
+
+  const sigY = afterItemsY + 105;
+  doc.setDrawColor(180);
+  doc.line(40, sigY, 190, sigY);
+  doc.line(360, sigY, 520, sigY);
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(50);
+  doc.text('Receiver / Store Incharge Signature', 45, sigY + 12);
+  doc.text('Authorized Signatory & Stamp', 370, sigY + 12);
+
+  doc.save(`Tax_Invoice_${po.poNumber}.pdf`);
+}
+
+// Dedicated Official PO Copy Document for Print Team
+export function exportPoCopyPdf(po: PurchaseOrder) {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const primaryOrange: [number, number, number] = [234, 88, 12];
+  const darkNavy: [number, number, number] = [15, 23, 42];
+
+  // Header Banner
+  doc.setFillColor(...primaryOrange);
+  doc.rect(40, 30, 515, 36, 'F');
+  doc.setFontSize(14);
+  doc.setTextColor(255);
+  doc.setFont('helvetica', 'bold');
+  doc.text('OFFICIAL PURCHASE ORDER COPY (INSTAMART PO)', 50, 53);
+
+  const meta = [
+    ['Purchase Order (PO)', po.poNumber, 'Order Date', po.orderDate],
+    ['PO Expiry Date', po.poExpiryDate || 'No Expiry', 'Current Workflow Stage', po.workflowStage],
+    ['Destination Facility', po.warehouseName, 'Status', po.status],
+    ['Warehouse Appointment', `${po.appointmentId || '-'} (${po.appointmentDate || '-'})`, 'Sales Order (SO)', po.so || '-'],
+    ['Invoice Number', po.invoiceNo || '-', 'Shipment Date', po.shipDate || '-'],
+    ['Master Boxes & Dims', `${po.noOfBoxes || 1} Box(es) [${po.boxDimensions || 'Standard'}]`, 'Logistics Partner', po.logisticsPortal || '-'],
+  ];
+
+  autoTable(doc, {
+    startY: 85,
+    head: [['PO Specification', 'Value', 'Operational Field', 'Value']],
+    body: meta,
+    styles: { fontSize: 8.5, cellPadding: 4.5 },
+    headStyles: { fillColor: darkNavy, textColor: 255 },
+  });
+
+  const lines =
+    Array.isArray(po.lineItems) && po.lineItems.length > 0
+      ? po.lineItems
+      : [{ itemId: po.itemId, itemName: po.itemName, qty: po.totalQty, boxDimensions: po.boxDimensions, noOfBoxes: po.noOfBoxes }];
+
+  const afterMetaY = (doc as any).lastAutoTable?.finalY || 200;
+  doc.setFontSize(11);
+  doc.setTextColor(20);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Authorized Product Item Lines (${lines.length} Items · Total: ${po.totalQty} Units)`, 40, afterMetaY + 22);
+
+  autoTable(doc, {
+    startY: afterMetaY + 30,
+    head: [['#', 'Item SKU ID', 'Product Item Name', 'Boxes', 'Per-Item Box Dimensions', 'Ordered Qty']],
+    body: lines.map((li, i) => [
+      String(i + 1),
+      li.itemId,
+      li.itemName,
+      String(li.noOfBoxes || 1),
+      li.boxDimensions || po.boxDimensions || '-',
+      String(li.qty),
+    ]),
+    styles: { fontSize: 8.5, cellPadding: 5 },
+    headStyles: { fillColor: primaryOrange, textColor: 255 },
+  });
+
+  const afterItemsY = (doc as any).lastAutoTable?.finalY || 350;
+  const sigY = afterItemsY + 50;
+  doc.setDrawColor(180);
+  doc.line(40, sigY, 190, sigY);
+  doc.line(360, sigY, 520, sigY);
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(50);
+  doc.text('Print Verification Team Sign', 45, sigY + 12);
+  doc.text('Instamart Operations Approver', 370, sigY + 12);
+
+  doc.save(`PO_Copy_${po.poNumber}.pdf`);
+}
+
 export function exportPoListToCsv(pos: PurchaseOrder[], tabName: string) {
   const rows = pos.map((po) => {
     const arr = formatPoToRow(po);

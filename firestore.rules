@@ -83,6 +83,8 @@ service cloud.firestore {
           'totalAmount', 'originalAmount', 'dnQty', 'dnAmount', 'acceptedQty', 'paidAmount', 'paymentStatus', 'paymentDueDate',
           'paymentHistory', 'paymentNotes', 'lastPaymentDate',
           'logisticsStatus', 'attemptFailed', 'attemptFailReason', 'attemptFailDate', 'attemptCount', 'attemptFailRemarks', 'rescheduledApptDate',
+          'isConfirmed', 'packagingStatus', 'dcVerified', 'invoiceVerified', 'poCopyVerified',
+          'confirmedByName', 'confirmedByEmpId',
           'orgScope',
           'createdByUid', 'createdByName', 'createdByEmpId',
           'updatedByUid', 'updatedByName', 'updatedByEmpId',
@@ -109,7 +111,7 @@ service cloud.firestore {
         data.clearBagNo is string && data.clearBagNo.size() <= 80 &&
         data.comment is string && data.comment.size() <= 500 &&
         data.pickupStatus is string && data.pickupStatus.size() <= 10 && data.pickupStatus in ['YES', 'NO'] &&
-        data.workflowStage is string && data.workflowStage.size() <= 20 && data.workflowStage in ['PO_ENTRY', 'IN_TRANSIT', 'GRN'] &&
+        data.workflowStage is string && data.workflowStage.size() <= 20 && data.workflowStage in ['PO_ENTRY', 'WAREHOUSE', 'PRINT_LOGISTICS', 'IN_TRANSIT', 'GRN', 'RTO'] &&
         data.inwardStatus is string && data.inwardStatus.size() <= 20 && data.inwardStatus in ['PENDING', 'SUCCESS'] &&
         data.grnNumber is string && data.grnNumber.size() <= 80 &&
         data.grnDnSummary is string && data.grnDnSummary.size() <= 500 &&

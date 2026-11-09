@@ -5,7 +5,13 @@ export type ThemeMode = 'light' | 'grey' | 'dark';
 export type TeamRole = 'admin' | 'backoffice' | 'warehouse' | 'logistics' | 'print';
 
 
-export type WorkflowStage = 'PO_ENTRY' | 'IN_TRANSIT' | 'GRN' | 'RTO';
+export type WorkflowStage =
+  | 'PO_ENTRY'
+  | 'WAREHOUSE'
+  | 'PRINT_LOGISTICS'
+  | 'IN_TRANSIT'
+  | 'GRN'
+  | 'RTO';
 
 export interface EmployeePermissions {
   canEditPo: boolean;
@@ -81,6 +87,13 @@ export interface PurchaseOrder {
   pickupMarkedAt?: string;
   printVerified?: 'YES' | 'NO';
   printVerifiedBy?: string;
+  isConfirmed?: boolean;
+  packagingStatus?: 'PENDING' | 'READY';
+  dcVerified?: boolean;
+  invoiceVerified?: boolean;
+  poCopyVerified?: boolean;
+  confirmedByName?: string;
+  confirmedByEmpId?: string;
   workflowStage: WorkflowStage;
   inwardStatus: 'PENDING' | 'SUCCESS';
   grnNumber: string;

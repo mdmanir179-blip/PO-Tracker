@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Truck, AlertCircle, Sparkles, Plus, Trash2, CreditCard } from 'lucide-react';
+import { X, Save, Truck, AlertCircle, Sparkles, Plus, Trash2, CreditCard, CheckCircle2 } from 'lucide-react';
 import {
   PurchaseOrder,
   TeamRole,
@@ -47,6 +47,8 @@ export interface PoFormValues {
   attemptCount?: number;
   attemptFailRemarks?: string;
   rescheduledApptDate?: string;
+  targetStage?: 'PO_ENTRY' | 'WAREHOUSE' | 'IN_TRANSIT';
+  isConfirmed?: boolean;
 }
 
 interface PoFormModalProps {
@@ -354,6 +356,61 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
     try {
       await onSave({
         ...values,
+        lineItems: cleanedLines,
+        itemId: summary.itemId,
+        itemName: summary.itemName,
+        totalQty: summary.totalQty,
+      });
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save PO record.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const submitWithTargetStage = async (stage: 'PO_ENTRY' | 'WAREHOUSE' | 'IN_TRANSIT') => {
+    if (isLockedInTransit) {
+      setError('In-Transit records are locked for standard employees. Only Admin can edit.');
+      return;
+    }
+
+    const cleanedLines = values.lineItems
+      .map((l) => ({
+        itemId: l.itemId.trim(),
+        itemName: l.itemName.trim(),
+        qty: Number(l.qty) || 0,
+      }))
+      .filter((l) => l.itemId && l.itemName);
+
+    if (!values.poNumber.trim() || !values.warehouseName.trim()) {
+      setError('PO Number and Warehouse Name are required.');
+      return;
+    }
+
+    if (cleanedLines.length === 0) {
+      setError('Please enter at least 1 valid Product Item ID and Item Name.');
+      return;
+    }
+
+    const summary = recomputeSummary(cleanedLines);
+
+    setIsSaving(true);
+    setError(null);
+    try {
+      const isConfirmed = stage === 'WAREHOUSE' || stage === 'IN_TRANSIT' || values.pickupStatus === 'YES';
+      const finalStatus =
+        values.pickupStatus === 'YES' || stage === 'IN_TRANSIT'
+          ? 'In Transit'
+          : stage === 'WAREHOUSE'
+          ? 'Confirmed - Sent to WH'
+          : values.status || 'Draft';
+
+      await onSave({
+        ...values,
+        targetStage: values.pickupStatus === 'YES' ? 'IN_TRANSIT' : stage,
+        isConfirmed,
+        status: finalStatus,
         lineItems: cleanedLines,
         itemId: summary.itemId,
         itemName: summary.itemName,
@@ -1099,7 +1156,7 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
           </div>
 
           <div
-            className={`flex items-center justify-end gap-3 pt-4 border-t ${
+            className={`flex flex-wrap items-center justify-end gap-2 sm:gap-3 pt-4 border-t ${
               darkMode ? 'border-slate-800' : 'border-slate-200'
             }`}
           >
@@ -1114,20 +1171,46 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={isSaving || isLockedInTransit}
-              className="px-5 py-2 rounded-lg text-xs font-semibold bg-orange-600 hover:bg-orange-500 text-white transition-colors flex items-center gap-2 cursor-pointer"
-            >
-              <Save className="w-4 h-4" />
-              <span>
-                {isSaving
-                  ? 'Saving...'
-                  : values.pickupStatus === 'YES'
-                  ? 'Save & Shift to In Transit'
-                  : 'Save PO Entry'}
-              </span>
-            </button>
+
+            {values.pickupStatus === 'YES' ? (
+              <button
+                type="button"
+                disabled={isSaving || isLockedInTransit}
+                onClick={() => submitWithTargetStage('IN_TRANSIT')}
+                className="px-5 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
+              >
+                <Truck className="w-4 h-4" />
+                <span>{isSaving ? 'Saving...' : 'Save & Shift to In Transit'}</span>
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={isSaving || isLockedInTransit}
+                  onClick={() => submitWithTargetStage('PO_ENTRY')}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 cursor-pointer ${
+                    darkMode
+                      ? 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
+                      : 'border-amber-400 text-amber-700 bg-amber-50 hover:bg-amber-100'
+                  }`}
+                  title="Save as Draft in PO Entry without sending to Warehouse yet"
+                >
+                  <Save className="w-3.5 h-3.5 text-amber-500" />
+                  <span>{isSaving ? 'Saving...' : 'Save as Draft (PO Entry)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSaving || isLockedInTransit}
+                  onClick={() => submitWithTargetStage('WAREHOUSE')}
+                  className="px-5 py-2 rounded-lg text-xs font-semibold bg-orange-600 hover:bg-orange-500 text-white transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
+                  title="Confirm PO and automatically send to Warehouse team"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{isSaving ? 'Processing...' : '✓ Confirm & Send to Warehouse'}</span>
+                </button>
+              </>
+            )}
           </div>
         </form>
       </div>

@@ -31,6 +31,7 @@ export interface WarehouseBoxUpdatePayload {
   noOfBoxes: number;
   boxDimensions: string;
   lineItems: PoLineItem[];
+  markReady?: boolean;
 }
 
 export interface WarehousePickupPayload {
@@ -51,11 +52,14 @@ interface WarehouseTabProps {
   onSearchChange: (query: string) => void;
   onUpdateBoxDimensions: (payload: WarehouseBoxUpdatePayload) => Promise<void>;
   onMarkPickup: (payload: WarehousePickupPayload) => Promise<void>;
+  onMarkPackagingReady?: (po: PurchaseOrder) => Promise<void>;
+  onDeletePo?: (po: PurchaseOrder) => void;
   onViewPoDetails: (po: PurchaseOrder) => void;
   onEditPo?: (po: PurchaseOrder) => void;
   darkMode: boolean;
   isGrey: boolean;
   userRole: TeamRole;
+  isAdmin?: boolean;
 }
 
 export const WarehouseTab: React.FC<WarehouseTabProps> = ({
@@ -64,11 +68,14 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
   onSearchChange,
   onUpdateBoxDimensions,
   onMarkPickup,
+  onMarkPackagingReady,
+  onDeletePo,
   onViewPoDetails,
   onEditPo,
   darkMode,
   isGrey,
   userRole,
+  isAdmin = false,
 }) => {
   const [statusFilter, setStatusFilter] = useState<'ALL_ACTIVE' | 'PENDING_PACKING' | 'READY_FOR_PICKUP' | 'PICKED_UP'>('ALL_ACTIVE');
   
@@ -94,13 +101,25 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
     setCurrentPage(1);
   }, [statusFilter, searchQuery]);
 
-  // Active warehouse orders (automatically excludes already picked-up, GRN, and RTO orders)
+  // Active warehouse orders (only confirmed POs awaiting packaging; excludes Draft PO_ENTRY, already packed/ready, In Transit, GRN, RTO)
   const activeWarehouseOrders = useMemo(() => {
     return purchaseOrders.filter((po) => {
       if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
-      // Auto-remove once marked as picked up
-      if (po.pickupStatus === 'YES') return false;
+      if (po.pickupStatus === 'YES' || po.workflowStage === 'IN_TRANSIT') return false;
+      // Exclude unconfirmed Drafts (still in PO Entry)
+      if (po.workflowStage === 'PO_ENTRY') return false;
+      // Auto-remove once marked ready & sent to Print & Logistics
+      if (po.workflowStage === 'PRINT_LOGISTICS' || po.packagingStatus === 'READY') return false;
       return true;
+    });
+  }, [purchaseOrders]);
+
+  // Orders that have been packed & marked ready for pickup (moved to Print/Logistics)
+  const readyForPickupOrders = useMemo(() => {
+    return purchaseOrders.filter((po) => {
+      if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
+      if (po.pickupStatus === 'YES' || po.workflowStage === 'IN_TRANSIT') return false;
+      return po.workflowStage === 'PRINT_LOGISTICS' || po.packagingStatus === 'READY';
     });
   }, [purchaseOrders]);
 
@@ -108,7 +127,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
   const pickedUpOrders = useMemo(() => {
     return purchaseOrders.filter((po) => {
       if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
-      return po.pickupStatus === 'YES';
+      return po.pickupStatus === 'YES' || po.workflowStage === 'IN_TRANSIT';
     });
   }, [purchaseOrders]);
 
@@ -119,17 +138,19 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
       const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
       return !hasDims;
     }).length;
-    const readyForPickup = activeWarehouseOrders.filter((po) => {
-      const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
-      return Boolean(hasDims);
-    }).length;
+    const readyForPickup = readyForPickupOrders.length;
     const pickedUp = pickedUpOrders.length;
     return { totalActive, pendingPacking, readyForPickup, pickedUp };
-  }, [activeWarehouseOrders, pickedUpOrders]);
+  }, [activeWarehouseOrders, readyForPickupOrders, pickedUpOrders]);
 
   // Filtered by search and status, sorted chronologically by shipment & appointment date
   const filteredOrders = useMemo(() => {
-    const sourceList = statusFilter === 'PICKED_UP' ? pickedUpOrders : activeWarehouseOrders;
+    const sourceList =
+      statusFilter === 'PICKED_UP'
+        ? pickedUpOrders
+        : statusFilter === 'READY_FOR_PICKUP'
+        ? readyForPickupOrders
+        : activeWarehouseOrders;
 
     return sourceList
       .filter((po) => {
@@ -137,8 +158,6 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
         const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
         if (statusFilter === 'PENDING_PACKING') {
           if (hasDims) return false;
-        } else if (statusFilter === 'READY_FOR_PICKUP') {
-          if (!hasDims) return false;
         }
 
         // Search query
@@ -202,16 +221,18 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
   };
 
   // Submit Box Dimensions
-  const handleSaveBoxDimensions = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveBoxDimensions = async (e?: React.FormEvent, markReady: boolean = false) => {
+    if (e) e.preventDefault();
     if (!editingBoxPo) return;
     setIsSavingBox(true);
     try {
       await onUpdateBoxDimensions({
         poId: editingBoxPo.id,
+        poNumber: editingBoxPo.poNumber,
         noOfBoxes: masterBoxCount,
         boxDimensions: masterBoxDim.trim(),
         lineItems: lineItemsState,
+        markReady,
       });
       setEditingBoxPo(null);
     } catch (err) {
@@ -612,6 +633,19 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                             <span>Box Dims</span>
                           </button>
 
+                          {/* Mark Packaging Ready & Move to Print/Logistics button */}
+                          {onMarkPackagingReady && !isPickedUp && po.packagingStatus !== 'READY' && (
+                            <button
+                              type="button"
+                              onClick={() => onMarkPackagingReady(po)}
+                              className="px-2.5 py-1.5 rounded-lg border border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-colors"
+                              title="Mark packaging complete and move PO to Print Team and Logistics Team"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Mark Ready</span>
+                            </button>
+                          )}
+
                           {/* Mark Shipment Pickup button */}
                           {!isPickedUp ? (
                             <button
@@ -631,6 +665,18 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                               title="Update Pickup Logistics Details"
                             >
                               Edit Handover
+                            </button>
+                          )}
+
+                          {/* Admin Delete PO Button */}
+                          {isAdmin && onDeletePo && (
+                            <button
+                              type="button"
+                              onClick={() => onDeletePo(po)}
+                              className="p-1.5 rounded-lg border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer transition-colors"
+                              title="Admin: Delete Purchase Order"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
                         </div>
@@ -816,21 +862,32 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
               </div>
 
               {/* Modal Buttons */}
-              <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setEditingBoxPo(null)}
-                  className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer"
+                  className="px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  type="button"
                   disabled={isSavingBox}
-                  className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  onClick={(e) => handleSaveBoxDimensions(e, false)}
+                  className="px-3.5 py-2 rounded-lg border border-orange-500/40 text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{isSavingBox ? 'Saving Dimensions...' : 'Save Box Dimensions'}</span>
+                  <span>{isSavingBox ? 'Saving...' : 'Save Dimensions'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingBox}
+                  onClick={(e) => handleSaveBoxDimensions(e, true)}
+                  className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  title="Save dimensions and immediately move to Print and Logistics teams"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{isSavingBox ? 'Processing...' : '✓ Save & Move to Print/Logistics'}</span>
                 </button>
               </div>
             </form>

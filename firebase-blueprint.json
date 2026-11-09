@@ -233,7 +233,7 @@
         },
         "workflowStage": {
           "type": "string",
-          "enum": ["PO_ENTRY", "IN_TRANSIT", "GRN"],
+          "enum": ["PO_ENTRY", "WAREHOUSE", "PRINT_LOGISTICS", "IN_TRANSIT", "GRN", "RTO"],
           "maxLength": 20,
           "description": "Current stage in the workflow pipeline"
         },
@@ -375,6 +375,37 @@
           "type": "string",
           "maxLength": 30,
           "description": "Next rescheduled appointment date"
+        },
+        "isConfirmed": {
+          "type": "boolean",
+          "description": "Whether PO is confirmed from draft to warehouse"
+        },
+        "packagingStatus": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Warehouse packaging status (PENDING or READY)"
+        },
+        "dcVerified": {
+          "type": "boolean",
+          "description": "Delivery Challan print verified"
+        },
+        "invoiceVerified": {
+          "type": "boolean",
+          "description": "Tax Invoice print verified"
+        },
+        "poCopyVerified": {
+          "type": "boolean",
+          "description": "Purchase Order Copy print verified"
+        },
+        "confirmedByName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Staff who confirmed the draft PO"
+        },
+        "confirmedByEmpId": {
+          "type": "string",
+          "maxLength": 50,
+          "description": "Employee ID of staff who confirmed the draft PO"
         },
         "orgScope": {
           "type": "string",
