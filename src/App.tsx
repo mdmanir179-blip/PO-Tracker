@@ -1053,12 +1053,13 @@ export default function App() {
     }
   };
 
-  // Print Team: Verify PO Document YES / NO
+  // Print Team: Verify PO Document YES / NO (Moving to In Transit on YES)
   const handleTogglePrintVerify = async (po: PurchaseOrder, verified: 'YES' | 'NO') => {
     if (!firebaseUser || !employeeProfile) return;
     const poRef = doc(db, 'purchase_orders', po.id);
+    const isYes = verified === 'YES';
     try {
-      await updateDoc(poRef, {
+      const updateData: any = {
         printVerified: verified,
         printVerifiedBy: `${employeeProfile.employeeName} (${employeeProfile.employeeId})`.slice(
           0,
@@ -1068,19 +1069,53 @@ export default function App() {
         updatedByName: employeeProfile.employeeName.slice(0, 100),
         updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
         updatedAt: serverTimestamp(),
-      });
+      };
+
+      if (isYes) {
+        updateData.workflowStage = 'IN_TRANSIT';
+        updateData.pickupStatus = 'YES';
+        updateData.status = 'In Transit';
+        updateData.dcVerified = true;
+        updateData.invoiceVerified = true;
+        updateData.poCopyVerified = true;
+      } else {
+        updateData.workflowStage = 'PRINT_LOGISTICS';
+        updateData.dcVerified = false;
+        updateData.invoiceVerified = false;
+        updateData.poCopyVerified = false;
+      }
+
+      await updateDoc(poRef, updateData);
+
+      if (isYes) {
+        await autoSyncPoProductsToDn({
+          id: po.id,
+          poNumber: po.poNumber,
+          orderDate: po.orderDate,
+          warehouseName: po.warehouseName,
+          itemId: po.itemId,
+          itemName: po.itemName,
+          totalQty: Number(po.totalQty) || 0,
+          invoiceNo: po.invoiceNo,
+          pickupTrackingId: po.pickupTrackingId,
+          asn: po.asn,
+        });
+      }
+
       await recordActivity(
-        `Print Team Document Verification: ${verified}`,
-        'PRINT_TEAM',
+        isYes ? 'Print Verified → Moved to In Transit' : 'Print Verification Reset',
+        isYes ? 'IN_TRANSIT' : 'PRINT_TEAM',
         po.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked Print Verification as ${verified} for PO ${po.poNumber}.`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked Print Verification as ${verified} for PO ${po.poNumber}${
+          isYes ? ' and moved order to In Transit.' : '.'
+        }`
       );
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
     }
   };
 
-  // Print Team: Individual Document Verification (Delivery Challan, Tax Invoice, PO Copy)
+  // Print Team: Individual Document Verification (Delivery Challan, Tax Invoice, PO Copy) -> Moves to In Transit when all verified
   const handleToggleDocVerify = async (
     po: PurchaseOrder,
     docType: 'dc' | 'invoice' | 'poCopy',
@@ -1103,9 +1138,9 @@ export default function App() {
     const allVerified = nextDc && nextInv && nextPoCopy;
 
     try {
-      await updateDoc(poRef, {
+      const updateData: any = {
         [key]: targetVal,
-        printVerified: allVerified ? 'YES' : po.printVerified === 'YES' && !targetVal ? 'NO' : po.printVerified,
+        printVerified: allVerified ? 'YES' : 'NO',
         printVerifiedBy: allVerified
           ? `${employeeProfile.employeeName} (${employeeProfile.employeeId})`.slice(0, 100)
           : po.printVerifiedBy || '',
@@ -1113,15 +1148,71 @@ export default function App() {
         updatedByName: employeeProfile.employeeName.slice(0, 100),
         updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
         updatedAt: serverTimestamp(),
+      };
+
+      if (allVerified) {
+        updateData.workflowStage = 'IN_TRANSIT';
+        updateData.pickupStatus = 'YES';
+        updateData.status = 'In Transit';
+      }
+
+      await updateDoc(poRef, updateData);
+
+      if (allVerified) {
+        await autoSyncPoProductsToDn({
+          id: po.id,
+          poNumber: po.poNumber,
+          orderDate: po.orderDate,
+          warehouseName: po.warehouseName,
+          itemId: po.itemId,
+          itemName: po.itemName,
+          totalQty: Number(po.totalQty) || 0,
+          invoiceNo: po.invoiceNo,
+          pickupTrackingId: po.pickupTrackingId,
+          asn: po.asn,
+        });
+      }
+
+      await recordActivity(
+        allVerified
+          ? 'All Documents Verified → Moved to In Transit'
+          : `Print Verification: ${docType.toUpperCase()} = ${targetVal ? 'YES' : 'NO'}`,
+        allVerified ? 'IN_TRANSIT' : 'PRINT_TEAM',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) verified ${docType.toUpperCase()} (${
+          targetVal ? 'YES' : 'NO'
+        }) for PO ${po.poNumber}${allVerified ? ' (All verified → Shifted to In Transit).' : '.'}`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
+  // Logistics / In Transit: Mark Delivered & Shift to GRN
+  const handleQuickShiftToGrn = async (po: PurchaseOrder) => {
+    if (!firebaseUser || !employeeProfile) return;
+    try {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const grnNum = po.grnNumber && po.grnNumber.trim() ? po.grnNumber.trim() : `GRN-${po.poNumber}`;
+      await updateDoc(doc(db, 'purchase_orders', po.id), {
+        workflowStage: 'GRN',
+        inwardStatus: 'SUCCESS',
+        status: 'Delivered / GRN Complete',
+        grnNumber: grnNum,
+        grnDate: todayStr,
+        isRto: false,
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
       });
       await recordActivity(
-        `Print Verification: ${docType.toUpperCase()} = ${targetVal ? 'YES' : 'NO'}`,
-        'PRINT_TEAM',
+        'Marked Delivered → Moved to GRN',
+        'GRN',
         po.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked ${docType.toUpperCase()} verification as ${
-          targetVal ? 'YES' : 'NO'
-        } for PO ${po.poNumber}.`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked delivery complete for PO ${po.poNumber}. Transferred to GRN.`
       );
+      setActiveTab('GRN');
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
     }
@@ -1193,10 +1284,18 @@ export default function App() {
       editingPo?.isRto === true ||
       (values.status || '').toUpperCase().startsWith('RTO');
 
+    const statusUpper = (values.status || '').toUpperCase();
+    const isStatusGrn =
+      statusUpper.includes('DELIVERED') ||
+      statusUpper.includes('GRN');
+    const isStatusRto =
+      statusUpper.includes('RTO') ||
+      statusUpper.includes('RETURN');
+
     let newStage: PurchaseOrder['workflowStage'] = 'PO_ENTRY';
-    if (isAlreadyGrn) {
+    if (isAlreadyGrn || isStatusGrn) {
       newStage = 'GRN';
-    } else if (isAlreadyRto) {
+    } else if (isAlreadyRto || isStatusRto) {
       newStage = 'RTO';
     } else if (values.pickupStatus === 'YES') {
       newStage = 'IN_TRANSIT';
@@ -1262,6 +1361,9 @@ export default function App() {
           ? editingPo.confirmedByEmpId || employeeProfile.employeeId
           : '',
         workflowStage: newStage as PurchaseOrder['workflowStage'],
+        inwardStatus: (newStage === 'GRN' ? 'SUCCESS' : (editingPo.inwardStatus || 'PENDING')) as 'PENDING' | 'SUCCESS',
+        isRto: newStage === 'RTO' ? true : Boolean(editingPo.isRto),
+        grnNumber: newStage === 'GRN' ? (editingPo.grnNumber || `GRN-${values.poNumber}`) : (editingPo.grnNumber || ''),
         totalAmount:
           typeof values.totalAmount === 'number'
             ? values.totalAmount
@@ -1310,15 +1412,37 @@ export default function App() {
         }
 
         await recordActivity(
-          shiftedToTransit ? 'Pickup YES → Shifted to In Transit & Synced to DN' : 'Updated PO Details',
-          shiftedToTransit ? 'IN_TRANSIT' : 'PO_ENTRY',
+          shiftedToTransit
+            ? 'Pickup YES → Shifted to In Transit & Synced to DN'
+            : newStage === 'GRN'
+            ? 'Delivered → Shifted to GRN'
+            : newStage === 'RTO'
+            ? 'Status RTO → Shifted to RTO'
+            : 'Updated PO Details',
+          newStage === 'GRN'
+            ? 'GRN'
+            : newStage === 'RTO'
+            ? 'RTO_TRACKER'
+            : shiftedToTransit
+            ? 'IN_TRANSIT'
+            : 'PO_ENTRY',
           values.poNumber,
           `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated PO ${values.poNumber}${
-            shiftedToTransit ? ' and shifted it to In Transit (Auto-synced to DN).' : '.'
+            shiftedToTransit
+              ? ' and shifted it to In Transit (Auto-synced to DN).'
+              : newStage === 'GRN'
+              ? ' (Marked Delivered → Moved to GRN).'
+              : newStage === 'RTO'
+              ? ' (Marked RTO → Moved to RTO Tracker).'
+              : '.'
           }`
         );
 
-        if (shiftedToTransit) {
+        if (newStage === 'GRN' && editingPo.workflowStage !== 'GRN') {
+          setActiveTab('GRN');
+        } else if (newStage === 'RTO' && editingPo.workflowStage !== 'RTO') {
+          setActiveTab('RTO_TRACKER');
+        } else if (shiftedToTransit) {
           setActiveTab('IN_TRANSIT');
         }
       } catch (err) {
@@ -2453,7 +2577,8 @@ export default function App() {
 
       return (
         po.workflowStage === 'IN_TRANSIT' ||
-        (po.pickupStatus === 'YES' && po.workflowStage !== 'PO_ENTRY')
+        (po.pickupStatus === 'YES' && po.workflowStage !== 'PO_ENTRY') ||
+        po.printVerified === 'YES'
       );
     });
   }, [purchaseOrders]);
@@ -3269,17 +3394,18 @@ export default function App() {
               onClick={() => setActiveTab('DN_TRACKER')}
               className="cursor-pointer transition-colors hover:bg-rose-500/5"
             >
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Instamart DN Tracker
+              <div className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center justify-between">
+                <span>Instamart DN Tracker</span>
+                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                  {dnRecords.length} DNs
+                </span>
               </div>
-              <div className="text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 text-rose-600 dark:text-rose-400">
-                {dnRecords.length}
+              <div className="text-xl sm:text-2xl font-black font-mono tabular-nums mt-1 text-rose-600 dark:text-rose-400 flex items-baseline gap-1">
+                <span>{totalDnQty}</span>
+                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Total Qty</span>
               </div>
               <div className="text-[11px] text-slate-400 mt-0.5">
-                Total Discrepancy Qty:{' '}
-                <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
-                  {totalDnQty}
-                </span>
+                Total Discrepancy Qty Across {dnRecords.length} DN Note(s)
               </div>
             </div>
           </div>
@@ -4391,10 +4517,33 @@ export default function App() {
                               <div className="text-slate-500">Bag: {po.clearBagNo || '-'}</div>
                             </td>
                             <td className="py-3 px-4 whitespace-nowrap">
-                              {po.pickupStatus === 'YES' ? (
-                                <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-                                  YES ({po.workflowStage === 'GRN' ? 'Delivered / GRN' : 'In Transit'})
+                              {po.workflowStage === 'GRN' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Delivered (GRN)</span>
                                 </span>
+                              ) : po.workflowStage === 'RTO' || po.isRto ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold text-[11px]">
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <span>RTO (Returned)</span>
+                                </span>
+                              ) : po.pickupStatus === 'YES' ? (
+                                <div className="space-y-1">
+                                  <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[11px] block text-center">
+                                    In Transit
+                                  </span>
+                                  {canUserManageLogistics && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickShiftToGrn(po)}
+                                      className="w-full px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold cursor-pointer flex items-center justify-center gap-1 shadow-xs active:scale-95"
+                                      title="Mark Delivered & Shift to GRN"
+                                    >
+                                      <PackageCheck className="w-3 h-3" />
+                                      <span>Mark Delivered</span>
+                                    </button>
+                                  )}
+                                </div>
                               ) : canUserManageLogistics ? (
                                 <div className="space-y-1">
                                   <button
@@ -4425,6 +4574,17 @@ export default function App() {
                             </td>
                             <td className="py-3 px-4 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-1.5">
+                                {canUserManageLogistics && po.workflowStage !== 'GRN' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQuickShiftToGrn(po)}
+                                    className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold inline-flex items-center gap-1 cursor-pointer shadow-xs active:scale-95"
+                                    title="Mark Delivered: Shift PO directly to GRN"
+                                  >
+                                    <PackageCheck className="w-3.5 h-3.5" />
+                                    <span>Delivered (GRN)</span>
+                                  </button>
+                                )}
                                 {canUserManageLogistics && (
                                   <button
                                     type="button"
@@ -4435,7 +4595,7 @@ export default function App() {
                                     className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                                   >
                                     <Edit3 className="w-3.5 h-3.5" />
-                                    <span>Add / Edit Delivery</span>
+                                    <span>Edit</span>
                                   </button>
                                 )}
                                 {canUserManageDn && (
@@ -4804,7 +4964,7 @@ export default function App() {
                                     >
                                       {po.printVerified === 'YES'
                                         ? 'Mark Unverified'
-                                        : '✓ Verify All'}
+                                        : '✓ Verify & Move to In Transit'}
                                     </button>
                                   )}
 

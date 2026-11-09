@@ -588,14 +588,14 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         </div>
 
         <div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">
-            Cumulative DN Quantity
+          <div className="text-xs font-semibold text-rose-600 dark:text-rose-400">
+            Instamart DN Tracker (Total Qty)
           </div>
-          <div className="text-2xl font-bold font-mono tabular-nums mt-1 text-red-600 dark:text-red-400">
-            {overallMetrics.totalDnQty}
+          <div className="text-2xl font-black font-mono tabular-nums mt-1 text-red-600 dark:text-red-400">
+            {overallMetrics.totalDnQty} <span className="text-xs font-semibold text-slate-500">Units</span>
           </div>
           <div className="text-[11px] text-slate-400 mt-0.5">
-            Across {dnRecords.length} Discrepancy Notes
+            Total Discrepancy Qty Across {dnRecords.length} DN Notes
           </div>
         </div>
       </div>
