@@ -220,6 +220,16 @@
           "maxLength": 10,
           "description": "Pickup Status: YES shifts record to In Transit"
         },
+        "pickupDate": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Actual date when shipment was picked up"
+        },
+        "pickupMarkedAt": {
+          "type": "string",
+          "maxLength": 30,
+          "description": "Timestamp string when pickup was recorded"
+        },
         "printVerified": {
           "type": "string",
           "enum": ["YES", "NO"],
@@ -384,6 +394,12 @@
           "type": "string",
           "maxLength": 30,
           "description": "Warehouse packaging status (PENDING or READY)"
+        },
+        "warehouseStatus": {
+          "type": "string",
+          "enum": ["PENDING", "PROCESSING", "READY_FOR_DISPATCH", "PICKED_UP"],
+          "maxLength": 30,
+          "description": "Detailed warehouse status"
         },
         "dcVerified": {
           "type": "boolean",

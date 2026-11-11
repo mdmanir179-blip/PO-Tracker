@@ -22,7 +22,7 @@ import {
   Save,
   RotateCcw,
 } from 'lucide-react';
-import { PurchaseOrder, PoLineItem, TeamRole, WarehouseStatus } from '../types';
+import { PurchaseOrder, PoLineItem, TeamRole, WarehouseStatus, compareLastAddedFirst } from '../types';
 import { Pagination } from './Pagination';
 
 export interface WarehouseBoxUpdatePayload {
@@ -188,12 +188,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
           itemsMatch
         );
       })
-      .sort((a, b) => {
-        // Sort chronologically: earliest appointment date or shipment date first
-        const dateA = a.appointmentDate || a.shipDate || a.orderDate || '9999-99-99';
-        const dateB = b.appointmentDate || b.shipDate || b.orderDate || '9999-99-99';
-        return dateA.localeCompare(dateB);
-      });
+      .sort(compareLastAddedFirst);
   }, [activeWarehouseOrders, pickedUpOrders, statusFilter, searchQuery]);
 
   // Open Edit Box Dimensions Modal

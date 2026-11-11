@@ -263,3 +263,71 @@ export interface AppNotification {
   daysDiff: number;
   appointmentId?: string;
 }
+
+export const getRecordTimestamp = (record: any): number => {
+  if (!record) return 0;
+  if (record.createdAt) {
+    if (typeof record.createdAt.toMillis === 'function') {
+      return record.createdAt.toMillis();
+    }
+    if (typeof record.createdAt.seconds === 'number') {
+      return record.createdAt.seconds * 1000 + (record.createdAt.nanoseconds || 0) / 1000000;
+    }
+    if (typeof record.createdAt === 'string') {
+      const parsed = Date.parse(record.createdAt);
+      if (!isNaN(parsed)) return parsed;
+    }
+  }
+  if (record.updatedAt) {
+    if (typeof record.updatedAt.toMillis === 'function') {
+      return record.updatedAt.toMillis();
+    }
+    if (typeof record.updatedAt.seconds === 'number') {
+      return record.updatedAt.seconds * 1000 + (record.updatedAt.nanoseconds || 0) / 1000000;
+    }
+    if (typeof record.updatedAt === 'string') {
+      const parsed = Date.parse(record.updatedAt);
+      if (!isNaN(parsed)) return parsed;
+    }
+  }
+  if (record.timestamp) {
+    if (typeof record.timestamp.toMillis === 'function') {
+      return record.timestamp.toMillis();
+    }
+    if (typeof record.timestamp.seconds === 'number') {
+      return record.timestamp.seconds * 1000;
+    }
+    if (typeof record.timestamp === 'string') {
+      const parsed = Date.parse(record.timestamp);
+      if (!isNaN(parsed)) return parsed;
+    }
+  }
+  if (record.orderDate && typeof record.orderDate === 'string') {
+    const parsed = Date.parse(record.orderDate);
+    if (!isNaN(parsed)) return parsed;
+  }
+  if (record.dnDate && typeof record.dnDate === 'string') {
+    const parsed = Date.parse(record.dnDate);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return 0;
+};
+
+// Compare helper: Newest / Last added first (Descending order)
+export const compareLastAddedFirst = <T extends any>(a: T, b: T): number => {
+  const timeA = getRecordTimestamp(a);
+  const timeB = getRecordTimestamp(b);
+  if (timeA !== timeB) {
+    return timeB - timeA; // Descending: newer timestamp first
+  }
+  const anyA = a as any;
+  const anyB = b as any;
+  const dateA = anyA?.orderDate || anyA?.shipDate || anyA?.appointmentDate || anyA?.dnDate || '';
+  const dateB = anyB?.orderDate || anyB?.shipDate || anyB?.appointmentDate || anyB?.dnDate || '';
+  if (dateA && dateB && dateA !== dateB) {
+    return dateB.localeCompare(dateA);
+  }
+  const idA = anyA?.poNumber || anyA?.dnNumber || anyA?.id || '';
+  const idB = anyB?.poNumber || anyB?.dnNumber || anyB?.id || '';
+  return idB.localeCompare(idA);
+};

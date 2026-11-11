@@ -78,6 +78,7 @@ import {
   AppNotification,
   PaymentStatus,
   PaymentTransaction,
+  compareLastAddedFirst,
 } from './types';
 import { AuthScreen } from './components/AuthScreen';
 import { PoFormModal, PoFormValues } from './components/PoFormModal';
@@ -1143,6 +1144,9 @@ export default function App() {
         updateData.workflowStage = 'WAREHOUSE';
         updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
         updateData.status = 'Print Verified - Sent to WH';
+      } else if (po.printVerified === 'YES' && po.workflowStage === 'WAREHOUSE') {
+        updateData.workflowStage = 'PRINT_LOGISTICS';
+        updateData.status = 'Sent to Print Team';
       }
 
       await updateDoc(poRef, updateData);
@@ -1156,6 +1160,49 @@ export default function App() {
         `${employeeProfile.employeeName} (${employeeProfile.employeeId}) verified ${docType.toUpperCase()} (${
           targetVal ? 'YES' : 'NO'
         }) for PO ${po.poNumber}${allVerified ? ' (All verified → Shifted to Warehouse).' : '.'}`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
+    }
+  };
+
+  // Print Team: Verify or Unverify ALL 3 Documents at once (Delivery Challan, Tax Invoice, PO Copy)
+  const handleToggleAllDocs = async (po: PurchaseOrder, markAll: boolean) => {
+    if (!firebaseUser || !employeeProfile) return;
+    const poRef = doc(db, 'purchase_orders', po.id);
+    try {
+      const updateData: any = {
+        dcVerified: markAll,
+        invoiceVerified: markAll,
+        poCopyVerified: markAll,
+        printVerified: markAll ? 'YES' : 'NO',
+        printVerifiedBy: markAll
+          ? `${employeeProfile.employeeName} (${employeeProfile.employeeId})`.slice(0, 100)
+          : '',
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      };
+
+      if (markAll) {
+        updateData.workflowStage = 'WAREHOUSE';
+        updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
+        updateData.status = 'Print Verified - Sent to WH';
+      } else {
+        updateData.workflowStage = 'PRINT_LOGISTICS';
+        updateData.status = 'Sent to Print Team';
+      }
+
+      await updateDoc(poRef, updateData);
+
+      await recordActivity(
+        markAll ? 'All Documents Verified → Moved to Warehouse' : 'Document Verification Reset to Pending',
+        markAll ? 'WAREHOUSE' : 'PRINT_TEAM',
+        po.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) ${
+          markAll ? 'marked all 3 documents verified' : 'reset all document verification'
+        } for PO ${po.poNumber}.`
       );
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
@@ -2583,14 +2630,16 @@ export default function App() {
   // Filtered lists
   const poEntryList = useMemo(
     () =>
-      purchaseOrders.filter(
-        (po) =>
-          po.workflowStage === 'PO_ENTRY' &&
-          (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.itemId.toLowerCase().includes(searchQuery.toLowerCase()))
-      ),
+      purchaseOrders
+        .filter(
+          (po) =>
+            po.workflowStage === 'PO_ENTRY' &&
+            (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              po.itemId.toLowerCase().includes(searchQuery.toLowerCase()))
+        )
+        .sort(compareLastAddedFirst),
     [purchaseOrders, searchQuery]
   );
 
@@ -2607,12 +2656,7 @@ export default function App() {
             (po.pickupTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
             (po.rtoTrackingId || '').toLowerCase().includes(searchQuery.toLowerCase())
         )
-        .sort((a, b) => {
-          // Serial order: earliest appointment date or shipment date first
-          const dateA = a.appointmentDate || a.shipDate || a.orderDate || '9999-99-99';
-          const dateB = b.appointmentDate || b.shipDate || b.orderDate || '9999-99-99';
-          return dateA.localeCompare(dateB);
-        }),
+        .sort(compareLastAddedFirst),
     [purchaseOrders, searchQuery]
   );
 
@@ -2671,7 +2715,7 @@ export default function App() {
     return list;
   }, [allFilteredPos, logisticsFilterMode, logisticsSignalFilterOnly]);
 
-  // Print Verification Team List: Pending verification (NO) always appears first!
+  // Print Verification Team List: Pending verification (NO) always appears first, with last added items first!
   const printTeamList = useMemo(() => {
     return allFilteredPos.slice().sort((a, b) => {
       const aPending = a.printVerified !== 'YES';
@@ -2679,9 +2723,8 @@ export default function App() {
       if (aPending && !bPending) return -1;
       if (!aPending && bPending) return 1;
 
-      const dateA = a.appointmentDate || a.shipDate || a.orderDate || '9999-99-99';
-      const dateB = b.appointmentDate || b.shipDate || b.orderDate || '9999-99-99';
-      return dateA.localeCompare(dateB);
+      // Within pending or verified groups: Last added data in the first row!
+      return compareLastAddedFirst(a, b);
     });
   }, [allFilteredPos]);
 
@@ -2760,10 +2803,8 @@ export default function App() {
             return urgencyA - urgencyB;
           }
 
-          // 2. Earliest appointment date or shipment date first
-          const dateA = a.appointmentDate || a.shipDate || a.orderDate || '9999-99-99';
-          const dateB = b.appointmentDate || b.shipDate || b.orderDate || '9999-99-99';
-          return dateA.localeCompare(dateB);
+          // 2. Within each urgency group: Last added data in the first row!
+          return compareLastAddedFirst(a, b);
         });
     },
     [actualInTransitPos, searchQuery]
@@ -2771,109 +2812,121 @@ export default function App() {
 
   const rtoList = useMemo(
     () =>
-      purchaseOrders.filter((po) => {
-        const isRto =
-          po.isRto === true ||
-          po.workflowStage === 'RTO' ||
-          (po.status || '').toUpperCase() === 'RTO' ||
-          (po.status || '').toUpperCase().startsWith('RTO') ||
-          (po.status || '').toUpperCase().includes('RETURN TO ORIGIN');
-        if (!isRto) return false;
+      purchaseOrders
+        .filter((po) => {
+          const isRto =
+            po.isRto === true ||
+            po.workflowStage === 'RTO' ||
+            (po.status || '').toUpperCase() === 'RTO' ||
+            (po.status || '').toUpperCase().startsWith('RTO') ||
+            (po.status || '').toUpperCase().includes('RETURN TO ORIGIN');
+          if (!isRto) return false;
 
-        const q = searchQuery.toLowerCase();
-        return (
-          po.poNumber.toLowerCase().includes(q) ||
-          po.warehouseName.toLowerCase().includes(q) ||
-          po.itemName.toLowerCase().includes(q) ||
-          po.pickupTrackingId.toLowerCase().includes(q) ||
-          (po.rtoTrackingId || '').toLowerCase().includes(q) ||
-          (po.rtoReason || '').toLowerCase().includes(q) ||
-          (po.status || '').toLowerCase().includes(q)
-        );
-      }),
+          const q = searchQuery.toLowerCase();
+          return (
+            po.poNumber.toLowerCase().includes(q) ||
+            po.warehouseName.toLowerCase().includes(q) ||
+            po.itemName.toLowerCase().includes(q) ||
+            po.pickupTrackingId.toLowerCase().includes(q) ||
+            (po.rtoTrackingId || '').toLowerCase().includes(q) ||
+            (po.rtoReason || '').toLowerCase().includes(q) ||
+            (po.status || '').toLowerCase().includes(q)
+          );
+        })
+        .sort(compareLastAddedFirst),
     [purchaseOrders, searchQuery]
   );
 
   const grnList = useMemo(
     () =>
-      purchaseOrders.filter((po) => {
-        // Do not include RTOs in GRN
-        const isRto =
-          po.isRto === true ||
-          po.workflowStage === 'RTO' ||
-          (po.status || '').toUpperCase() === 'RTO' ||
-          (po.status || '').toUpperCase().startsWith('RTO');
-        if (isRto) return false;
+      purchaseOrders
+        .filter((po) => {
+          // Do not include RTOs in GRN
+          const isRto =
+            po.isRto === true ||
+            po.workflowStage === 'RTO' ||
+            (po.status || '').toUpperCase() === 'RTO' ||
+            (po.status || '').toUpperCase().startsWith('RTO');
+          if (isRto) return false;
 
-        const isGrn =
-          po.workflowStage === 'GRN' ||
-          po.inwardStatus === 'SUCCESS' ||
-          Boolean(po.grnNumber && po.grnNumber.trim()) ||
-          (po.status || '').toUpperCase().includes('GRN') ||
-          (po.status || '').toUpperCase().includes('DELIVERED');
-        if (!isGrn) return false;
+          const isGrn =
+            po.workflowStage === 'GRN' ||
+            po.inwardStatus === 'SUCCESS' ||
+            Boolean(po.grnNumber && po.grnNumber.trim()) ||
+            (po.status || '').toUpperCase().includes('GRN') ||
+            (po.status || '').toUpperCase().includes('DELIVERED');
+          if (!isGrn) return false;
 
-        const q = searchQuery.toLowerCase();
-        return (
-          po.poNumber.toLowerCase().includes(q) ||
-          (po.grnNumber || '').toLowerCase().includes(q) ||
-          po.warehouseName.toLowerCase().includes(q) ||
-          po.itemName.toLowerCase().includes(q)
-        );
-      }),
+          const q = searchQuery.toLowerCase();
+          return (
+            po.poNumber.toLowerCase().includes(q) ||
+            (po.grnNumber || '').toLowerCase().includes(q) ||
+            po.warehouseName.toLowerCase().includes(q) ||
+            po.itemName.toLowerCase().includes(q)
+          );
+        })
+        .sort(compareLastAddedFirst),
     [purchaseOrders, searchQuery]
   );
 
   const grnDnList = useMemo(
     () =>
-      purchaseOrders.filter(
-        (po) =>
-          po.hasDn &&
-          (po.workflowStage === 'GRN' || po.inwardStatus === 'SUCCESS') &&
-          (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.grnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            po.itemId.toLowerCase().includes(searchQuery.toLowerCase()))
-      ),
+      purchaseOrders
+        .filter(
+          (po) =>
+            po.hasDn &&
+            (po.workflowStage === 'GRN' || po.inwardStatus === 'SUCCESS') &&
+            (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              po.grnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+              po.itemId.toLowerCase().includes(searchQuery.toLowerCase()))
+        )
+        .sort(compareLastAddedFirst),
     [purchaseOrders, searchQuery]
   );
 
   const filteredDnList = useMemo(
     () =>
-      dnRecords.filter(
-        (dn) =>
-          dn.dnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          dn.facilityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          dn.parentPoDetails.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          dn.dnSkuIdItemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          dn.lrNo.toLowerCase().includes(searchQuery.toLowerCase())
-      ),
+      dnRecords
+        .filter(
+          (dn) =>
+            dn.dnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            dn.facilityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            dn.parentPoDetails.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            dn.dnSkuIdItemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            dn.lrNo.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .sort(compareLastAddedFirst),
     [dnRecords, searchQuery]
   );
 
   const filteredLogs = useMemo(
     () =>
-      activityLogs.filter(
-        (l) =>
-          l.employeeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          l.employeeId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          l.referenceNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          l.action.toLowerCase().includes(searchQuery.toLowerCase())
-      ),
+      activityLogs
+        .filter(
+          (l) =>
+            l.employeeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            l.employeeId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            l.referenceNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            l.action.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .sort(compareLastAddedFirst),
     [activityLogs, searchQuery]
   );
 
   const filteredPocList = useMemo(
     () =>
-      pocContacts.filter(
-        (p) =>
-          p.facilityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          p.pocName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          p.contactNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          p.emailId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (p.cityOrHub || '').toLowerCase().includes(searchQuery.toLowerCase())
-      ),
+      pocContacts
+        .filter(
+          (p) =>
+            p.facilityName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.pocName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.contactNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.emailId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (p.cityOrHub || '').toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .sort(compareLastAddedFirst),
     [pocContacts, searchQuery]
   );
 
@@ -5064,13 +5117,31 @@ export default function App() {
 
                               {/* Document Verification Checklist: Challan, Invoice, PO Copy */}
                               <td className="py-3 px-4 whitespace-nowrap">
-                                <div className="flex flex-col gap-1">
+                                <div className="flex flex-col gap-1.5 min-w-[170px]">
+                                  <div className="flex items-center justify-between gap-1 pb-1 border-b border-slate-200 dark:border-slate-800">
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                      {isAllVerified ? '3 of 3 Verified' : `${(isDcOk ? 1 : 0) + (isInvOk ? 1 : 0) + (isPoCopyOk ? 1 : 0)} of 3 Checked`}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleAllDocs(po, !isAllVerified)}
+                                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                                        isAllVerified
+                                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25'
+                                          : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-xs'
+                                      }`}
+                                      title={isAllVerified ? 'Click to reset all 3 documents to unverified' : 'Click to mark all 3 documents verified at once'}
+                                    >
+                                      {isAllVerified ? 'Reset All' : '✓ Mark All (3/3)'}
+                                    </button>
+                                  </div>
+
                                   <button
                                     type="button"
                                     onClick={() => handleToggleDocVerify(po, 'dc')}
-                                    className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
                                       isDcOk
-                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
                                         : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
                                     }`}
                                     title="Click to toggle Delivery Challan verification"
@@ -5086,9 +5157,9 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => handleToggleDocVerify(po, 'invoice')}
-                                    className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
                                       isInvOk
-                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
                                         : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
                                     }`}
                                     title="Click to toggle Tax Invoice verification"
@@ -5104,9 +5175,9 @@ export default function App() {
                                   <button
                                     type="button"
                                     onClick={() => handleToggleDocVerify(po, 'poCopy')}
-                                    className={`px-2 py-0.5 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
                                       isPoCopyOk
-                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
                                         : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
                                     }`}
                                     title="Click to toggle PO Copy verification"
