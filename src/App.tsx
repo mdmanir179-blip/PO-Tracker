@@ -74,6 +74,7 @@ import {
   ActivityLog,
   ActiveTab,
   WorkflowStage,
+  WarehouseStatus,
   AppNotification,
   PaymentStatus,
   PaymentTransaction,
@@ -263,6 +264,7 @@ export default function App() {
 
   // Ops Notifications & Alert Center State
   const [logisticsSignalFilterOnly, setLogisticsSignalFilterOnly] = useState<boolean>(false);
+  const [logisticsFilterMode, setLogisticsFilterMode] = useState<'ACTIVE' | 'DELIVERED' | 'ALL'>('ACTIVE');
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     return localStorage.getItem('instamart_sound_alerts') !== 'false';
@@ -916,6 +918,7 @@ export default function App() {
     invoiceNo: string;
     pickupTrackingId: string;
     asn: string;
+    [key: string]: any;
   }) => {
     if (!firebaseUser || !employeeProfile) return;
     const autoDnId = `dn_auto_${poData.id.replace(/[^a-zA-Z0-9_-]/g, '')}`.slice(0, 100);
@@ -1053,7 +1056,7 @@ export default function App() {
     }
   };
 
-  // Print Team: Verify PO Document YES / NO (Moving to In Transit on YES)
+  // Print Team: Verify PO Document YES / NO (Moving to Warehouse on YES)
   const handleTogglePrintVerify = async (po: PurchaseOrder, verified: 'YES' | 'NO') => {
     if (!firebaseUser || !employeeProfile) return;
     const poRef = doc(db, 'purchase_orders', po.id);
@@ -1072,14 +1075,15 @@ export default function App() {
       };
 
       if (isYes) {
-        updateData.workflowStage = 'IN_TRANSIT';
-        updateData.pickupStatus = 'YES';
-        updateData.status = 'In Transit';
+        updateData.workflowStage = 'WAREHOUSE';
+        updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
+        updateData.status = 'Print Verified - Sent to WH';
         updateData.dcVerified = true;
         updateData.invoiceVerified = true;
         updateData.poCopyVerified = true;
       } else {
         updateData.workflowStage = 'PRINT_LOGISTICS';
+        updateData.status = 'Sent to Print Team';
         updateData.dcVerified = false;
         updateData.invoiceVerified = false;
         updateData.poCopyVerified = false;
@@ -1087,27 +1091,12 @@ export default function App() {
 
       await updateDoc(poRef, updateData);
 
-      if (isYes) {
-        await autoSyncPoProductsToDn({
-          id: po.id,
-          poNumber: po.poNumber,
-          orderDate: po.orderDate,
-          warehouseName: po.warehouseName,
-          itemId: po.itemId,
-          itemName: po.itemName,
-          totalQty: Number(po.totalQty) || 0,
-          invoiceNo: po.invoiceNo,
-          pickupTrackingId: po.pickupTrackingId,
-          asn: po.asn,
-        });
-      }
-
       await recordActivity(
-        isYes ? 'Print Verified → Moved to In Transit' : 'Print Verification Reset',
-        isYes ? 'IN_TRANSIT' : 'PRINT_TEAM',
+        isYes ? 'Print Verified → Moved to Warehouse' : 'Print Verification Reset',
+        isYes ? 'WAREHOUSE' : 'PRINT_TEAM',
         po.poNumber,
         `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked Print Verification as ${verified} for PO ${po.poNumber}${
-          isYes ? ' and moved order to In Transit.' : '.'
+          isYes ? ' and moved order to Warehouse.' : '.'
         }`
       );
     } catch (err) {
@@ -1115,7 +1104,7 @@ export default function App() {
     }
   };
 
-  // Print Team: Individual Document Verification (Delivery Challan, Tax Invoice, PO Copy) -> Moves to In Transit when all verified
+  // Print Team: Individual Document Verification (Delivery Challan, Tax Invoice, PO Copy) -> Moves to Warehouse when all verified
   const handleToggleDocVerify = async (
     po: PurchaseOrder,
     docType: 'dc' | 'invoice' | 'poCopy',
@@ -1151,37 +1140,22 @@ export default function App() {
       };
 
       if (allVerified) {
-        updateData.workflowStage = 'IN_TRANSIT';
-        updateData.pickupStatus = 'YES';
-        updateData.status = 'In Transit';
+        updateData.workflowStage = 'WAREHOUSE';
+        updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
+        updateData.status = 'Print Verified - Sent to WH';
       }
 
       await updateDoc(poRef, updateData);
 
-      if (allVerified) {
-        await autoSyncPoProductsToDn({
-          id: po.id,
-          poNumber: po.poNumber,
-          orderDate: po.orderDate,
-          warehouseName: po.warehouseName,
-          itemId: po.itemId,
-          itemName: po.itemName,
-          totalQty: Number(po.totalQty) || 0,
-          invoiceNo: po.invoiceNo,
-          pickupTrackingId: po.pickupTrackingId,
-          asn: po.asn,
-        });
-      }
-
       await recordActivity(
         allVerified
-          ? 'All Documents Verified → Moved to In Transit'
+          ? 'All Documents Verified → Moved to Warehouse'
           : `Print Verification: ${docType.toUpperCase()} = ${targetVal ? 'YES' : 'NO'}`,
-        allVerified ? 'IN_TRANSIT' : 'PRINT_TEAM',
+        allVerified ? 'WAREHOUSE' : 'PRINT_TEAM',
         po.poNumber,
         `${employeeProfile.employeeName} (${employeeProfile.employeeId}) verified ${docType.toUpperCase()} (${
           targetVal ? 'YES' : 'NO'
-        }) for PO ${po.poNumber}${allVerified ? ' (All verified → Shifted to In Transit).' : '.'}`
+        }) for PO ${po.poNumber}${allVerified ? ' (All verified → Shifted to Warehouse).' : '.'}`
       );
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
@@ -1194,7 +1168,7 @@ export default function App() {
     try {
       const todayStr = new Date().toISOString().slice(0, 10);
       const grnNum = po.grnNumber && po.grnNumber.trim() ? po.grnNumber.trim() : `GRN-${po.poNumber}`;
-      await updateDoc(doc(db, 'purchase_orders', po.id), {
+      const payload: Partial<PurchaseOrder> = {
         workflowStage: 'GRN',
         inwardStatus: 'SUCCESS',
         status: 'Delivered / GRN Complete',
@@ -1205,12 +1179,19 @@ export default function App() {
         updatedByName: employeeProfile.employeeName.slice(0, 100),
         updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
         updatedAt: serverTimestamp(),
+      };
+      await updateDoc(doc(db, 'purchase_orders', po.id), payload);
+      await autoSyncPoProductsToDn({
+        ...po,
+        ...payload,
+        grnNumber: grnNum,
+        grnDate: todayStr,
       });
       await recordActivity(
         'Marked Delivered → Moved to GRN',
         'GRN',
         po.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked delivery complete for PO ${po.poNumber}. Transferred to GRN.`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked delivery complete for PO ${po.poNumber}. Transferred directly to GRN.`
       );
       setActiveTab('GRN');
     } catch (err) {
@@ -1302,7 +1283,7 @@ export default function App() {
     } else if (values.targetStage) {
       newStage = values.targetStage;
     } else if (values.isConfirmed) {
-      newStage = 'WAREHOUSE';
+      newStage = 'PRINT_LOGISTICS';
     } else if (editingPo?.workflowStage) {
       newStage = editingPo.workflowStage;
     }
@@ -1337,6 +1318,8 @@ export default function App() {
         status:
           values.pickupStatus === 'YES' && editingPo.workflowStage === 'PO_ENTRY'
             ? 'In Transit'
+            : newStage === 'PRINT_LOGISTICS'
+            ? 'Sent to Print Team'
             : newStage === 'WAREHOUSE' && (!editingPo.status || editingPo.status === 'Draft' || editingPo.status === 'New PO Created')
             ? 'Confirmed - Sent to WH'
             : values.status.trim().slice(0, 60),
@@ -1350,6 +1333,7 @@ export default function App() {
         comment: values.comment.trim().slice(0, 500),
         pickupStatus: values.pickupStatus,
         isConfirmed: isConfirmedOrder,
+        warehouseStatus: editingPo.warehouseStatus || 'PENDING',
         packagingStatus:
           newStage === 'PRINT_LOGISTICS'
             ? 'READY'
@@ -1467,6 +1451,8 @@ export default function App() {
         status:
           values.pickupStatus === 'YES'
             ? 'In Transit'
+            : newStage === 'PRINT_LOGISTICS'
+            ? 'Sent to Print Team'
             : newStage === 'WAREHOUSE'
             ? 'Confirmed - Sent to WH'
             : values.status.trim().slice(0, 60),
@@ -1480,7 +1466,8 @@ export default function App() {
         comment: values.comment.trim().slice(0, 500),
         pickupStatus: values.pickupStatus,
         isConfirmed: isConfirmedOrder,
-        packagingStatus: newStage === 'PRINT_LOGISTICS' ? 'READY' : 'PENDING',
+        warehouseStatus: 'PENDING',
+        packagingStatus: 'PENDING',
         confirmedByName: isConfirmedOrder ? employeeProfile.employeeName : '',
         confirmedByEmpId: isConfirmedOrder ? employeeProfile.employeeId : '',
         dcVerified: false,
@@ -1539,14 +1526,22 @@ export default function App() {
         await recordActivity(
           values.pickupStatus === 'YES'
             ? 'Created PO & Shifted to In Transit (Auto-Synced to DN)'
+            : newStage === 'PRINT_LOGISTICS'
+            ? 'Created PO & Sent to Print Team'
             : 'Created New PO Entry',
-          values.pickupStatus === 'YES' ? 'IN_TRANSIT' : 'PO_ENTRY',
+          values.pickupStatus === 'YES'
+            ? 'IN_TRANSIT'
+            : newStage === 'PRINT_LOGISTICS'
+            ? 'PRINT_TEAM'
+            : 'PO_ENTRY',
           values.poNumber,
-          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created PO ${values.poNumber} (Amount: ₹${(newPoDoc.totalAmount || 0).toLocaleString('en-IN')}) for ${values.warehouseName}.`
+          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created PO ${values.poNumber} (Amount: ₹${(newPoDoc.totalAmount || 0).toLocaleString('en-IN')}) for ${values.warehouseName}.${newStage === 'PRINT_LOGISTICS' ? ' Transferred to Print Team.' : ''}`
         );
 
         if (values.pickupStatus === 'YES') {
           setActiveTab('IN_TRANSIT');
+        } else if (newStage === 'PRINT_LOGISTICS') {
+          setActiveTab('PRINT_TEAM');
         }
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `purchase_orders/${poId}`);
@@ -1686,25 +1681,112 @@ export default function App() {
     if (!firebaseUser || !employeeProfile) return;
     try {
       const nowIso = new Date().toISOString();
+      const todayStr = nowIso.slice(0, 10);
       await updateDoc(doc(db, 'purchase_orders', payload.poId), {
         pickupStatus: 'YES',
+        warehouseStatus: 'PICKED_UP',
         status: 'In Transit',
         workflowStage: 'IN_TRANSIT',
         logisticsPortal: payload.logisticsPortal,
         pickupTrackingId: payload.pickupTrackingId,
         puc: payload.puc,
         asn: payload.asn,
+        pickupDate: payload.pickupDate || todayStr,
         pickupMarkedAt: nowIso,
         updatedAt: serverTimestamp(),
       });
+
+      const matchedPo = purchaseOrders.find((p) => p.id === payload.poId);
+      if (matchedPo) {
+        await autoSyncPoProductsToDn({
+          id: matchedPo.id,
+          poNumber: matchedPo.poNumber,
+          orderDate: matchedPo.orderDate,
+          warehouseName: matchedPo.warehouseName,
+          itemId: matchedPo.itemId,
+          itemName: matchedPo.itemName,
+          totalQty: Number(matchedPo.totalQty) || 0,
+          invoiceNo: matchedPo.invoiceNo,
+          pickupTrackingId: payload.pickupTrackingId || matchedPo.pickupTrackingId,
+          asn: payload.asn || matchedPo.asn,
+        });
+      }
+
       await recordActivity(
-        'Warehouse Shipment Handover / Picked Up',
+        'Warehouse Shipment Handover / Picked Up → Moved to Logistics',
         'WAREHOUSE',
         payload.poNumber || payload.poId,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked shipment pickup via ${payload.logisticsPortal || 'Transporter'} (Tracking: ${payload.pickupTrackingId || 'N/A'}, PUC: ${payload.puc || 'N/A'}, ASN: ${payload.asn || 'N/A'}) for PO ${payload.poNumber || payload.poId}.`
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked shipment pickup via ${payload.logisticsPortal || 'Transporter'} (Tracking: ${payload.pickupTrackingId || 'N/A'}, PUC: ${payload.puc || 'N/A'}, ASN: ${payload.asn || 'N/A'}) for PO ${payload.poNumber || payload.poId}. Shifted to Logistics Team.`
       );
     } catch (err: any) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${payload.poId}`);
+    }
+  };
+
+  // Warehouse: Dropdown Status Change (Pending, Processing, Ready for Dispatch, Picked Up)
+  // Selecting "Picked Up" immediately moves order to Logistics Team (In Transit)
+  const handleWarehouseStatusChange = async (po: PurchaseOrder, newStatus: WarehouseStatus) => {
+    if (!firebaseUser || !employeeProfile) return;
+    try {
+      const poRef = doc(db, 'purchase_orders', po.id);
+      const updateData: any = {
+        warehouseStatus: newStatus,
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+        updatedAt: serverTimestamp(),
+      };
+
+      if (newStatus === 'PICKED_UP') {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        updateData.pickupStatus = 'YES';
+        updateData.workflowStage = 'IN_TRANSIT';
+        updateData.status = 'In Transit - Picked Up';
+        updateData.pickupDate = po.pickupDate || todayStr;
+        updateData.pickupMarkedAt = new Date().toISOString();
+
+        await updateDoc(poRef, updateData);
+
+        await autoSyncPoProductsToDn({
+          id: po.id,
+          poNumber: po.poNumber,
+          orderDate: po.orderDate,
+          warehouseName: po.warehouseName,
+          itemId: po.itemId,
+          itemName: po.itemName,
+          totalQty: Number(po.totalQty) || 0,
+          invoiceNo: po.invoiceNo,
+          pickupTrackingId: po.pickupTrackingId,
+          asn: po.asn,
+        });
+
+        await recordActivity(
+          'Warehouse Marked Picked Up → Moved to Logistics',
+          'LOGISTICS',
+          po.poNumber,
+          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked PO ${po.poNumber} as Picked Up in Warehouse. Order transferred to Logistics Team.`
+        );
+      } else {
+        if (newStatus === 'READY_FOR_DISPATCH') {
+          updateData.packagingStatus = 'READY';
+          updateData.status = 'Ready for Dispatch';
+        } else if (newStatus === 'PROCESSING') {
+          updateData.status = 'Warehouse - Processing';
+        } else {
+          updateData.status = 'Warehouse - Pending';
+        }
+
+        await updateDoc(poRef, updateData);
+
+        await recordActivity(
+          `Warehouse Status: ${newStatus}`,
+          'WAREHOUSE',
+          po.poNumber,
+          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated Warehouse status to ${newStatus} for PO ${po.poNumber}.`
+        );
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
     }
   };
 
@@ -2307,9 +2389,13 @@ export default function App() {
       } else if (isNowGrn) {
         updatePayload.workflowStage = 'GRN';
         updatePayload.inwardStatus = 'SUCCESS';
+        updatePayload.status = 'Delivered / GRN Complete';
         updatePayload.isRto = false;
         if (!po.grnDate) {
           updatePayload.grnDate = new Date().toISOString().slice(0, 10);
+        }
+        if (!po.grnNumber) {
+          updatePayload.grnNumber = `GRN-${po.poNumber}`;
         }
       } else {
         updatePayload.workflowStage = 'IN_TRANSIT';
@@ -2317,6 +2403,12 @@ export default function App() {
       }
 
       await updateDoc(poRef, updatePayload);
+      if (isNowGrn) {
+        await autoSyncPoProductsToDn({
+          ...po,
+          ...updatePayload,
+        });
+      }
       await recordActivity(
         isNowRto
           ? `PO Marked RTO → Shifted from In-Transit to RTO Management`
@@ -2337,6 +2429,8 @@ export default function App() {
           workflowStage: 'RTO',
           rtoPickedStatus: po.rtoPickedStatus || 'PENDING',
         });
+      } else if (isNowGrn) {
+        setActiveTab('GRN');
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
@@ -2530,15 +2624,52 @@ export default function App() {
     });
   }, [purchaseOrders]);
 
+  // Helper to identify GRN / Delivered orders
+  const isOrderGrn = (po: PurchaseOrder) => {
+    return (
+      po.workflowStage === 'GRN' ||
+      po.inwardStatus === 'SUCCESS' ||
+      Boolean(po.grnNumber && po.grnNumber.trim()) ||
+      (po.status || '').toUpperCase().includes('GRN') ||
+      (po.status || '').toUpperCase().includes('DELIVERED')
+    );
+  };
+
+  // Helper to identify RTO orders
+  const isOrderRto = (po: PurchaseOrder) => {
+    return (
+      po.isRto === true ||
+      po.workflowStage === 'RTO' ||
+      (po.status || '').toUpperCase() === 'RTO' ||
+      (po.status || '').toUpperCase().startsWith('RTO') ||
+      (po.status || '').toUpperCase().includes('RETURN TO ORIGIN')
+    );
+  };
+
+  const activeLogisticsCount = useMemo(() => {
+    return purchaseOrders.filter((po) => !isOrderGrn(po) && !isOrderRto(po)).length;
+  }, [purchaseOrders]);
+
+  const deliveredLogisticsCount = useMemo(() => {
+    return purchaseOrders.filter((po) => isOrderGrn(po) && !isOrderRto(po)).length;
+  }, [purchaseOrders]);
+
   const logisticsDisplayList = useMemo(() => {
+    let list = allFilteredPos;
+    if (logisticsFilterMode === 'ACTIVE') {
+      list = list.filter((po) => !isOrderGrn(po) && !isOrderRto(po));
+    } else if (logisticsFilterMode === 'DELIVERED') {
+      list = list.filter((po) => isOrderGrn(po) && !isOrderRto(po));
+    }
+
     if (logisticsSignalFilterOnly) {
-      return allFilteredPos.filter((po) => {
+      list = list.filter((po) => {
         const ship = getShipmentDateStatus(po.shipDate);
         return ship.isToday;
       });
     }
-    return allFilteredPos;
-  }, [allFilteredPos, logisticsSignalFilterOnly]);
+    return list;
+  }, [allFilteredPos, logisticsFilterMode, logisticsSignalFilterOnly]);
 
   // Print Verification Team List: Pending verification (NO) always appears first!
   const printTeamList = useMemo(() => {
@@ -2760,13 +2891,17 @@ export default function App() {
     return dnRecords.reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0);
   }, [dnRecords]);
 
+  const activePrintTeamCount = useMemo(() => {
+    return purchaseOrders.filter((po) => po.workflowStage === 'PRINT_LOGISTICS').length;
+  }, [purchaseOrders]);
+
   const activeWarehouseCount = useMemo(() => {
     return purchaseOrders.filter((po) => {
       if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
-      if (po.pickupStatus === 'YES') return false;
-      if (po.workflowStage === 'PO_ENTRY' && !po.isConfirmed) return false;
-      if (po.packagingStatus === 'READY' || po.workflowStage === 'PRINT_LOGISTICS') return false;
-      return true;
+      if (po.pickupStatus === 'YES' || po.workflowStage === 'IN_TRANSIT') return false;
+      if (po.workflowStage === 'PO_ENTRY') return false;
+      if (po.workflowStage === 'PRINT_LOGISTICS') return false;
+      return po.workflowStage === 'WAREHOUSE';
     }).length;
   }, [purchaseOrders]);
 
@@ -2874,6 +3009,13 @@ export default function App() {
       icon: <Plus className="w-4 h-4 shrink-0" />,
     },
     {
+      id: 'PRINT_TEAM',
+      label: 'Print Team',
+      shortLabel: 'Print Team',
+      badge: activePrintTeamCount,
+      icon: <Printer className="w-4 h-4 shrink-0" />,
+    },
+    {
       id: 'WAREHOUSE',
       label: 'Warehouse',
       shortLabel: 'Warehouse',
@@ -2884,15 +3026,8 @@ export default function App() {
       id: 'LOGISTICS',
       label: 'Logistics & Delivery',
       shortLabel: 'Logistics',
-      badge: purchaseOrders.length,
+      badge: activeLogisticsCount,
       icon: <Truck className="w-4 h-4 shrink-0" />,
-    },
-    {
-      id: 'PRINT_TEAM',
-      label: 'Print Team',
-      shortLabel: 'Print Team',
-      badge: purchaseOrders.length,
-      icon: <Printer className="w-4 h-4 shrink-0" />,
     },
     {
       id: 'IN_TRANSIT',
@@ -4257,6 +4392,7 @@ export default function App() {
             onSearchChange={setSearchQuery}
             onUpdateBoxDimensions={handleWarehouseUpdateBoxDimensions}
             onMarkPickup={handleWarehouseMarkPickup}
+            onWarehouseStatusChange={handleWarehouseStatusChange}
             onMarkPackagingReady={handleWarehouseMarkPackagingReady}
             onDeletePo={requestDeletePo}
             onViewPoDetails={(po) => setSelectedPoForDetails(po)}
@@ -4365,14 +4501,81 @@ export default function App() {
                 </div>
               )}
 
+              {/* Logistics Filter Mode Tabs (Active Deliveries / Delivered / All) */}
+              <div className="px-4 sm:px-6 py-2.5 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-1.5 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-lg">
+                  <button
+                    type="button"
+                    onClick={() => setLogisticsFilterMode('ACTIVE')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                      logisticsFilterMode === 'ACTIVE'
+                        ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <span>Active Deliveries</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-bold">
+                      {activeLogisticsCount}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLogisticsFilterMode('DELIVERED')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                      logisticsFilterMode === 'DELIVERED'
+                        ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <span>Delivered (GRN)</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-bold">
+                      {deliveredLogisticsCount}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setLogisticsFilterMode('ALL')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                      logisticsFilterMode === 'ALL'
+                        ? 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <span>All Deliveries</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold">
+                      {allFilteredPos.length}
+                    </span>
+                  </button>
+                </div>
+
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                  Marking &quot;Delivered&quot; transfers order directly to GRN &amp; Inward.
+                </div>
+              </div>
+
               {logisticsDisplayList.length === 0 ? (
                 <div className="p-10 text-center text-xs text-slate-500 space-y-2">
                   <div className="font-semibold text-slate-700 dark:text-slate-300">
-                    {logisticsSignalFilterOnly
-                      ? "No Purchase Orders with Pickup scheduled for Today."
-                      : "No Purchase Orders or Logistics deliveries found."}
+                    {logisticsFilterMode === 'ACTIVE'
+                      ? 'No pending deliveries in active queue.'
+                      : logisticsFilterMode === 'DELIVERED'
+                      ? 'No delivered orders in history.'
+                      : logisticsSignalFilterOnly
+                      ? 'No Purchase Orders with Pickup scheduled for Today.'
+                      : 'No Purchase Orders or Logistics deliveries found.'}
                   </div>
-                  {logisticsSignalFilterOnly ? (
+                  {logisticsFilterMode === 'ACTIVE' && deliveredLogisticsCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setLogisticsFilterMode('DELIVERED')}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      View Delivered Orders ({deliveredLogisticsCount})
+                    </button>
+                  )}
+                  {logisticsSignalFilterOnly && (
                     <button
                       type="button"
                       onClick={() => setLogisticsSignalFilterOnly(false)}
@@ -4380,8 +4583,6 @@ export default function App() {
                     >
                       Show All Logistics Deliveries
                     </button>
-                  ) : (
-                    <p>Click "+ Add Logistics Delivery" above to log a new delivery.</p>
                   )}
                 </div>
               ) : (
@@ -4517,16 +4718,34 @@ export default function App() {
                               <div className="text-slate-500">Bag: {po.clearBagNo || '-'}</div>
                             </td>
                             <td className="py-3 px-4 whitespace-nowrap">
-                              {po.workflowStage === 'GRN' ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-                                  <CheckCircle2 className="w-3.5 h-3.5" />
-                                  <span>Delivered (GRN)</span>
-                                </span>
-                              ) : po.workflowStage === 'RTO' || po.isRto ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold text-[11px]">
-                                  <RotateCcw className="w-3.5 h-3.5" />
-                                  <span>RTO (Returned)</span>
-                                </span>
+                              {isOrderGrn(po) ? (
+                                <div className="space-y-1">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Delivered (GRN)</span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveTab('GRN')}
+                                    className="block text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold hover:underline cursor-pointer"
+                                  >
+                                    View in GRN →
+                                  </button>
+                                </div>
+                              ) : isOrderRto(po) ? (
+                                <div className="space-y-1">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold text-[11px]">
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                    <span>RTO (Returned)</span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveTab('RTO_TRACKER')}
+                                    className="block text-[10px] text-rose-600 dark:text-rose-400 font-semibold hover:underline cursor-pointer"
+                                  >
+                                    View in RTO →
+                                  </button>
+                                </div>
                               ) : po.pickupStatus === 'YES' ? (
                                 <div className="space-y-1">
                                   <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[11px] block text-center">
@@ -4540,7 +4759,7 @@ export default function App() {
                                       title="Mark Delivered & Shift to GRN"
                                     >
                                       <PackageCheck className="w-3 h-3" />
-                                      <span>Mark Delivered</span>
+                                      <span>Mark Delivered → GRN</span>
                                     </button>
                                   )}
                                 </div>
@@ -4574,7 +4793,7 @@ export default function App() {
                             </td>
                             <td className="py-3 px-4 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-1.5">
-                                {canUserManageLogistics && po.workflowStage !== 'GRN' && (
+                                {canUserManageLogistics && !isOrderGrn(po) && (
                                   <button
                                     type="button"
                                     onClick={() => handleQuickShiftToGrn(po)}
@@ -4583,6 +4802,17 @@ export default function App() {
                                   >
                                     <PackageCheck className="w-3.5 h-3.5" />
                                     <span>Delivered (GRN)</span>
+                                  </button>
+                                )}
+                                {canUserManageLogistics && isOrderGrn(po) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveTab('GRN')}
+                                    className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-300 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                    title="View this order in GRN"
+                                  >
+                                    <PackageCheck className="w-3.5 h-3.5" />
+                                    <span>In GRN →</span>
                                   </button>
                                 )}
                                 {canUserManageLogistics && (
@@ -4757,7 +4987,7 @@ export default function App() {
                   <span>Print Verification Team — PO Slip & Invoice Print Verification</span>
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Verify PO documents (YES / NO) and download individual PO PDF or Excel slips for dispatch packaging.
+                  Print Delivery Challan, Tax Invoice &amp; PO Copy. Once verified, orders automatically move to Warehouse for box packaging &amp; dispatch.
                 </p>
               </div>
             </div>
@@ -4964,7 +5194,7 @@ export default function App() {
                                     >
                                       {po.printVerified === 'YES'
                                         ? 'Mark Unverified'
-                                        : '✓ Verify & Move to In Transit'}
+                                        : '✓ Verify & Move to Warehouse'}
                                     </button>
                                   )}
 
@@ -5241,6 +5471,7 @@ export default function App() {
                                 <option value="Out for Delivery">Status: Out for Delivery</option>
                                 <option value="Waiting for Slot">Status: Waiting for Slot</option>
                                 <option value="Appointment Re-scheduled">Status: Re-scheduled</option>
+                                <option value="Delivered">Delivered &rarr; Move to GRN</option>
                                 <option value="GRN Completed">Move to GRN &amp; Inward &rarr;</option>
                                 <option value="RTO">Move to RTO Management &rarr;</option>
                               </select>

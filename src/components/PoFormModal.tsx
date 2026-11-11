@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Truck, AlertCircle, Sparkles, Plus, Trash2, CreditCard, CheckCircle2 } from 'lucide-react';
+import { X, Save, Truck, AlertCircle, Sparkles, Plus, Trash2, CreditCard, CheckCircle2, Printer } from 'lucide-react';
 import {
   PurchaseOrder,
   TeamRole,
@@ -47,7 +47,7 @@ export interface PoFormValues {
   attemptCount?: number;
   attemptFailRemarks?: string;
   rescheduledApptDate?: string;
-  targetStage?: 'PO_ENTRY' | 'WAREHOUSE' | 'IN_TRANSIT';
+  targetStage?: 'PO_ENTRY' | 'PRINT_LOGISTICS' | 'WAREHOUSE' | 'IN_TRANSIT' | 'GRN' | 'RTO';
   isConfirmed?: boolean;
 }
 
@@ -369,7 +369,7 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
     }
   };
 
-  const submitWithTargetStage = async (stage: 'PO_ENTRY' | 'WAREHOUSE' | 'IN_TRANSIT') => {
+  const submitWithTargetStage = async (stage: 'PO_ENTRY' | 'PRINT_LOGISTICS' | 'WAREHOUSE' | 'IN_TRANSIT') => {
     if (isLockedInTransit) {
       setError('In-Transit records are locked for standard employees. Only Admin can edit.');
       return;
@@ -398,17 +398,32 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
     setIsSaving(true);
     setError(null);
     try {
-      const isConfirmed = stage === 'WAREHOUSE' || stage === 'IN_TRANSIT' || values.pickupStatus === 'YES';
+      const isConfirmed =
+        stage === 'PRINT_LOGISTICS' ||
+        stage === 'WAREHOUSE' ||
+        stage === 'IN_TRANSIT' ||
+        values.pickupStatus === 'YES';
+      const isDelivered =
+        (values.status || '').toUpperCase().includes('DELIVERED') ||
+        (values.status || '').toUpperCase().includes('GRN');
+      const isRto = (values.status || '').toUpperCase().includes('RTO');
+
       const finalStatus =
-        values.pickupStatus === 'YES' || stage === 'IN_TRANSIT'
+        isDelivered
+          ? 'Delivered / GRN Complete'
+          : isRto
+          ? 'RTO'
+          : values.pickupStatus === 'YES' || stage === 'IN_TRANSIT'
           ? 'In Transit'
+          : stage === 'PRINT_LOGISTICS'
+          ? 'Sent to Print Team'
           : stage === 'WAREHOUSE'
           ? 'Confirmed - Sent to WH'
           : values.status || 'Draft';
 
       await onSave({
         ...values,
-        targetStage: values.pickupStatus === 'YES' ? 'IN_TRANSIT' : stage,
+        targetStage: isDelivered ? 'GRN' : isRto ? 'RTO' : values.pickupStatus === 'YES' ? 'IN_TRANSIT' : stage,
         isConfirmed,
         status: finalStatus,
         lineItems: cleanedLines,
@@ -890,6 +905,8 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
                 <option value="Dispatched">Dispatched</option>
                 <option value="In Transit">In Transit</option>
                 <option value="Out for Delivered">Out for Delivered</option>
+                <option value="Delivered">Delivered (Move to GRN)</option>
+                <option value="Delivered / GRN Complete">Delivered / GRN Complete (Move to GRN)</option>
                 <option value="WFA">WFA (Waiting for Appointment)</option>
                 <option value="RTO">RTO (Return to Origin)</option>
                 <option value="Re-Attempt Scheduled">Re-Attempt Scheduled</option>
@@ -1202,12 +1219,12 @@ export const PoFormModal: React.FC<PoFormModalProps> = ({
                 <button
                   type="button"
                   disabled={isSaving || isLockedInTransit}
-                  onClick={() => submitWithTargetStage('WAREHOUSE')}
+                  onClick={() => submitWithTargetStage('PRINT_LOGISTICS')}
                   className="px-5 py-2 rounded-lg text-xs font-semibold bg-orange-600 hover:bg-orange-500 text-white transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
-                  title="Confirm PO and automatically send to Warehouse team"
+                  title="Confirm PO and automatically send to Print Team for document printing & verification"
                 >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{isSaving ? 'Processing...' : '✓ Confirm & Send to Warehouse'}</span>
+                  <Printer className="w-4 h-4" />
+                  <span>{isSaving ? 'Processing...' : '✓ Confirm & Send to Print Team'}</span>
                 </button>
               </>
             )}

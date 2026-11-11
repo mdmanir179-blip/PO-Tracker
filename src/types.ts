@@ -13,6 +13,8 @@ export type WorkflowStage =
   | 'GRN'
   | 'RTO';
 
+export type WarehouseStatus = 'PENDING' | 'PROCESSING' | 'READY_FOR_DISPATCH' | 'PICKED_UP';
+
 export interface EmployeePermissions {
   canEditPo: boolean;
   canManageCatalog: boolean;
@@ -89,6 +91,7 @@ export interface PurchaseOrder {
   printVerifiedBy?: string;
   isConfirmed?: boolean;
   packagingStatus?: 'PENDING' | 'READY';
+  warehouseStatus?: WarehouseStatus;
   dcVerified?: boolean;
   invoiceVerified?: boolean;
   poCopyVerified?: boolean;

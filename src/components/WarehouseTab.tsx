@@ -22,7 +22,7 @@ import {
   Save,
   RotateCcw,
 } from 'lucide-react';
-import { PurchaseOrder, PoLineItem, TeamRole } from '../types';
+import { PurchaseOrder, PoLineItem, TeamRole, WarehouseStatus } from '../types';
 import { Pagination } from './Pagination';
 
 export interface WarehouseBoxUpdatePayload {
@@ -52,6 +52,7 @@ interface WarehouseTabProps {
   onSearchChange: (query: string) => void;
   onUpdateBoxDimensions: (payload: WarehouseBoxUpdatePayload) => Promise<void>;
   onMarkPickup: (payload: WarehousePickupPayload) => Promise<void>;
+  onWarehouseStatusChange: (po: PurchaseOrder, status: WarehouseStatus) => Promise<void>;
   onMarkPackagingReady?: (po: PurchaseOrder) => Promise<void>;
   onDeletePo?: (po: PurchaseOrder) => void;
   onViewPoDetails: (po: PurchaseOrder) => void;
@@ -68,6 +69,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
   onSearchChange,
   onUpdateBoxDimensions,
   onMarkPickup,
+  onWarehouseStatusChange,
   onMarkPackagingReady,
   onDeletePo,
   onViewPoDetails,
@@ -77,7 +79,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
   userRole,
   isAdmin = false,
 }) => {
-  const [statusFilter, setStatusFilter] = useState<'ALL_ACTIVE' | 'PENDING_PACKING' | 'READY_FOR_PICKUP' | 'PICKED_UP'>('ALL_ACTIVE');
+  const [statusFilter, setStatusFilter] = useState<'ALL_ACTIVE' | 'PENDING' | 'PROCESSING' | 'READY_FOR_DISPATCH' | 'PICKED_UP'>('ALL_ACTIVE');
   
   // Modal state for editing individual product box dimensions
   const [editingBoxPo, setEditingBoxPo] = useState<PurchaseOrder | null>(null);
@@ -101,65 +103,68 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
     setCurrentPage(1);
   }, [statusFilter, searchQuery]);
 
-  // Active warehouse orders (only confirmed POs awaiting packaging; excludes Draft PO_ENTRY, already packed/ready, In Transit, GRN, RTO)
+  // Active warehouse orders (Orders currently in Warehouse stage awaiting packaging/dispatch)
   const activeWarehouseOrders = useMemo(() => {
     return purchaseOrders.filter((po) => {
       if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
       if (po.pickupStatus === 'YES' || po.workflowStage === 'IN_TRANSIT') return false;
-      // Exclude unconfirmed Drafts (still in PO Entry)
       if (po.workflowStage === 'PO_ENTRY') return false;
-      // Auto-remove once marked ready & sent to Print & Logistics
-      if (po.workflowStage === 'PRINT_LOGISTICS' || po.packagingStatus === 'READY') return false;
-      return true;
+      if (po.workflowStage === 'PRINT_LOGISTICS') return false;
+      return po.workflowStage === 'WAREHOUSE';
     });
   }, [purchaseOrders]);
 
-  // Orders that have been packed & marked ready for pickup (moved to Print/Logistics)
-  const readyForPickupOrders = useMemo(() => {
-    return purchaseOrders.filter((po) => {
-      if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
-      if (po.pickupStatus === 'YES' || po.workflowStage === 'IN_TRANSIT') return false;
-      return po.workflowStage === 'PRINT_LOGISTICS' || po.packagingStatus === 'READY';
-    });
-  }, [purchaseOrders]);
-
-  // Historical picked up orders
+  // Historical picked up orders (transferred to Logistics Team)
   const pickedUpOrders = useMemo(() => {
     return purchaseOrders.filter((po) => {
       if (po.workflowStage === 'GRN' || po.workflowStage === 'RTO' || po.isRto) return false;
-      return po.pickupStatus === 'YES' || po.workflowStage === 'IN_TRANSIT';
+      return (
+        po.warehouseStatus === 'PICKED_UP' ||
+        po.pickupStatus === 'YES' ||
+        po.workflowStage === 'IN_TRANSIT'
+      );
     });
   }, [purchaseOrders]);
 
-  // Compute metrics
+  // Compute metrics for Warehouse 4-state workflow
   const metrics = useMemo(() => {
     const totalActive = activeWarehouseOrders.length;
-    const pendingPacking = activeWarehouseOrders.filter((po) => {
-      const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
-      return !hasDims;
-    }).length;
-    const readyForPickup = readyForPickupOrders.length;
+    const pending = activeWarehouseOrders.filter(
+      (po) => !po.warehouseStatus || po.warehouseStatus === 'PENDING'
+    ).length;
+    const processing = activeWarehouseOrders.filter(
+      (po) => po.warehouseStatus === 'PROCESSING'
+    ).length;
+    const readyForDispatch = activeWarehouseOrders.filter(
+      (po) => po.warehouseStatus === 'READY_FOR_DISPATCH' || po.packagingStatus === 'READY'
+    ).length;
     const pickedUp = pickedUpOrders.length;
-    return { totalActive, pendingPacking, readyForPickup, pickedUp };
-  }, [activeWarehouseOrders, readyForPickupOrders, pickedUpOrders]);
+    return { totalActive, pending, processing, readyForDispatch, pickedUp };
+  }, [activeWarehouseOrders, pickedUpOrders]);
 
   // Filtered by search and status, sorted chronologically by shipment & appointment date
   const filteredOrders = useMemo(() => {
-    const sourceList =
-      statusFilter === 'PICKED_UP'
-        ? pickedUpOrders
-        : statusFilter === 'READY_FOR_PICKUP'
-        ? readyForPickupOrders
-        : activeWarehouseOrders;
+    let sourceList: PurchaseOrder[];
+    if (statusFilter === 'PICKED_UP') {
+      sourceList = pickedUpOrders;
+    } else if (statusFilter === 'PENDING') {
+      sourceList = activeWarehouseOrders.filter(
+        (po) => !po.warehouseStatus || po.warehouseStatus === 'PENDING'
+      );
+    } else if (statusFilter === 'PROCESSING') {
+      sourceList = activeWarehouseOrders.filter(
+        (po) => po.warehouseStatus === 'PROCESSING'
+      );
+    } else if (statusFilter === 'READY_FOR_DISPATCH') {
+      sourceList = activeWarehouseOrders.filter(
+        (po) => po.warehouseStatus === 'READY_FOR_DISPATCH' || po.packagingStatus === 'READY'
+      );
+    } else {
+      sourceList = activeWarehouseOrders;
+    }
 
     return sourceList
       .filter((po) => {
-        // Filter tab
-        const hasDims = po.boxDimensions && po.boxDimensions.trim().length > 0;
-        if (statusFilter === 'PENDING_PACKING') {
-          if (hasDims) return false;
-        }
-
         // Search query
         const q = searchQuery.toLowerCase().trim();
         if (!q) return true;
@@ -280,62 +285,83 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
   return (
     <div className="space-y-4">
       {/* Workspace Header Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div
-          className={`p-3.5 rounded-xl border ${
-            darkMode
-              ? 'bg-slate-900 border-slate-800'
-              : isGrey
-              ? 'bg-zinc-100 border-zinc-300'
-              : 'bg-white border-slate-200'
+          className={`p-3.5 rounded-xl border cursor-pointer transition-colors ${
+            statusFilter === 'ALL_ACTIVE'
+              ? 'border-orange-500/80 bg-orange-500/10'
+              : darkMode
+              ? 'bg-slate-900 border-slate-800 hover:border-orange-500/40'
+              : 'bg-white border-slate-200 hover:border-orange-300'
           }`}
+          onClick={() => setStatusFilter('ALL_ACTIVE')}
         >
           <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-[11px] font-semibold">Active Warehouse POs</span>
+            <span className="text-[11px] font-semibold">Active Warehouse</span>
             <Boxes className="w-4 h-4 text-orange-500" />
           </div>
           <div className="text-xl font-bold font-mono">{metrics.totalActive}</div>
-          <span className="text-[10px] text-slate-400">Packaging &amp; Dispatch Queue</span>
+          <span className="text-[10px] text-slate-400">Total in WH Queue</span>
         </div>
 
         <div
           className={`p-3.5 rounded-xl border cursor-pointer transition-colors ${
-            statusFilter === 'PENDING_PACKING'
+            statusFilter === 'PENDING'
               ? 'border-amber-500/80 bg-amber-500/10'
               : darkMode
               ? 'bg-slate-900 border-slate-800 hover:border-amber-500/40'
               : 'bg-white border-slate-200 hover:border-amber-300'
           }`}
-          onClick={() => setStatusFilter(statusFilter === 'PENDING_PACKING' ? 'ALL_ACTIVE' : 'PENDING_PACKING')}
+          onClick={() => setStatusFilter(statusFilter === 'PENDING' ? 'ALL_ACTIVE' : 'PENDING')}
         >
           <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 mb-1">
-            <span className="text-[11px] font-semibold">Need Box Dimensions</span>
+            <span className="text-[11px] font-semibold">Pending</span>
             <AlertTriangle className="w-4 h-4" />
           </div>
           <div className="text-xl font-bold font-mono text-amber-600 dark:text-amber-400">
-            {metrics.pendingPacking}
+            {metrics.pending}
           </div>
-          <span className="text-[10px] text-slate-400">L x W x H entry pending</span>
+          <span className="text-[10px] text-slate-400">Awaiting packaging</span>
         </div>
 
         <div
           className={`p-3.5 rounded-xl border cursor-pointer transition-colors ${
-            statusFilter === 'READY_FOR_PICKUP'
+            statusFilter === 'PROCESSING'
               ? 'border-blue-500/80 bg-blue-500/10'
               : darkMode
               ? 'bg-slate-900 border-slate-800 hover:border-blue-500/40'
               : 'bg-white border-slate-200 hover:border-blue-300'
           }`}
-          onClick={() => setStatusFilter(statusFilter === 'READY_FOR_PICKUP' ? 'ALL_ACTIVE' : 'READY_FOR_PICKUP')}
+          onClick={() => setStatusFilter(statusFilter === 'PROCESSING' ? 'ALL_ACTIVE' : 'PROCESSING')}
         >
           <div className="flex items-center justify-between text-blue-600 dark:text-blue-400 mb-1">
-            <span className="text-[11px] font-semibold">Ready for Pickup</span>
-            <Clock className="w-4 h-4" />
+            <span className="text-[11px] font-semibold">Processing</span>
+            <Boxes className="w-4 h-4 text-blue-500" />
           </div>
           <div className="text-xl font-bold font-mono text-blue-600 dark:text-blue-400">
-            {metrics.readyForPickup}
+            {metrics.processing}
           </div>
-          <span className="text-[10px] text-slate-400">Packed &amp; awaiting transporter</span>
+          <span className="text-[10px] text-slate-400">Box packing in progress</span>
+        </div>
+
+        <div
+          className={`p-3.5 rounded-xl border cursor-pointer transition-colors ${
+            statusFilter === 'READY_FOR_DISPATCH'
+              ? 'border-purple-500/80 bg-purple-500/10'
+              : darkMode
+              ? 'bg-slate-900 border-slate-800 hover:border-purple-500/40'
+              : 'bg-white border-slate-200 hover:border-purple-300'
+          }`}
+          onClick={() => setStatusFilter(statusFilter === 'READY_FOR_DISPATCH' ? 'ALL_ACTIVE' : 'READY_FOR_DISPATCH')}
+        >
+          <div className="flex items-center justify-between text-purple-600 dark:text-purple-400 mb-1">
+            <span className="text-[11px] font-semibold">Ready for Dispatch</span>
+            <Clock className="w-4 h-4 text-purple-500" />
+          </div>
+          <div className="text-xl font-bold font-mono text-purple-600 dark:text-purple-400">
+            {metrics.readyForDispatch}
+          </div>
+          <span className="text-[10px] text-slate-400">Packed &amp; staged</span>
         </div>
 
         <div
@@ -349,13 +375,13 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
           onClick={() => setStatusFilter(statusFilter === 'PICKED_UP' ? 'ALL_ACTIVE' : 'PICKED_UP')}
         >
           <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 mb-1">
-            <span className="text-[11px] font-semibold">Picked Up / Dispatched</span>
+            <span className="text-[11px] font-semibold">Picked Up</span>
             <CheckCircle2 className="w-4 h-4" />
           </div>
           <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
             {metrics.pickedUp}
           </div>
-          <span className="text-[10px] text-slate-400">Handed to Courier</span>
+          <span className="text-[10px] text-slate-400">Moved to Logistics</span>
         </div>
       </div>
 
@@ -379,29 +405,40 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            Active Warehouse ({metrics.totalActive})
+            All Active ({metrics.totalActive})
           </button>
           <button
             type="button"
-            onClick={() => setStatusFilter('PENDING_PACKING')}
+            onClick={() => setStatusFilter('PENDING')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-              statusFilter === 'PENDING_PACKING'
+              statusFilter === 'PENDING'
                 ? 'bg-amber-600 text-white shadow-xs'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            Pending Box Dims ({metrics.pendingPacking})
+            Pending ({metrics.pending})
           </button>
           <button
             type="button"
-            onClick={() => setStatusFilter('READY_FOR_PICKUP')}
+            onClick={() => setStatusFilter('PROCESSING')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
-              statusFilter === 'READY_FOR_PICKUP'
+              statusFilter === 'PROCESSING'
                 ? 'bg-blue-600 text-white shadow-xs'
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            Ready for Pickup ({metrics.readyForPickup})
+            Processing ({metrics.processing})
+          </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter('READY_FOR_DISPATCH')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
+              statusFilter === 'READY_FOR_DISPATCH'
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+          >
+            Ready for Dispatch ({metrics.readyForDispatch})
           </button>
           <button
             type="button"
@@ -412,7 +449,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                 : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            Dispatched ({metrics.pickedUp})
+            Picked Up ({metrics.pickedUp})
           </button>
         </div>
 
@@ -480,7 +517,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                   <th className="py-3 px-4 text-center whitespace-nowrap">Total Boxes</th>
                   <th className="py-3 px-4 whitespace-nowrap">Master Box Dimensions</th>
                   <th className="py-3 px-4 whitespace-nowrap">Carrier &amp; PUC / ASN</th>
-                  <th className="py-3 px-4 whitespace-nowrap">Pickup Status</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Warehouse Status</th>
                   <th className="py-3 px-4 text-right whitespace-nowrap">Warehouse Actions</th>
                 </tr>
               </thead>
@@ -604,19 +641,59 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                         )}
                       </td>
 
-                      {/* Pickup Status */}
+                      {/* Warehouse Status Dropdown */}
                       <td className="py-3 px-4 whitespace-nowrap">
-                        {isPickedUp ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>Picked Up</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[11px]">
-                            <Clock className="w-3.5 h-3.5" />
-                            <span>Awaiting Pickup</span>
-                          </span>
-                        )}
+                        <div className="flex flex-col gap-1">
+                          <select
+                            value={po.warehouseStatus || 'PENDING'}
+                            onChange={(e) =>
+                              onWarehouseStatusChange(
+                                po,
+                                e.target.value as WarehouseStatus
+                              )
+                            }
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border cursor-pointer focus:outline-none focus:ring-2 focus:ring-orange-500 transition-colors shadow-xs ${
+                              (po.warehouseStatus || 'PENDING') === 'PENDING'
+                                ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300'
+                                : po.warehouseStatus === 'PROCESSING'
+                                ? 'bg-blue-500/15 border-blue-500/40 text-blue-700 dark:text-blue-300'
+                                : po.warehouseStatus === 'READY_FOR_DISPATCH'
+                                ? 'bg-purple-500/15 border-purple-500/40 text-purple-700 dark:text-purple-300'
+                                : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-700 dark:text-emerald-300'
+                            }`}
+                            title="Warehouse Status: Select 'Picked Up' to immediately move order to Logistics Team"
+                          >
+                            <option
+                              value="PENDING"
+                              className="bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 font-semibold"
+                            >
+                              ⏳ Pending
+                            </option>
+                            <option
+                              value="PROCESSING"
+                              className="bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 font-semibold"
+                            >
+                              ⚙️ Processing
+                            </option>
+                            <option
+                              value="READY_FOR_DISPATCH"
+                              className="bg-white dark:bg-slate-900 text-purple-600 dark:text-purple-400 font-semibold"
+                            >
+                              📦 Ready for Dispatch
+                            </option>
+                            <option
+                              value="PICKED_UP"
+                              className="bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 font-bold"
+                            >
+                              🚚 Picked Up (Move to Logistics)
+                            </option>
+                          </select>
+                          {(po.pickupStatus === 'YES' || po.warehouseStatus === 'PICKED_UP') && (
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                              ✓ Moved to Logistics
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Warehouse Actions */}
