@@ -148,7 +148,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
         setStatus('GRN Partial - DN Raised');
       }
       if (dnQty === 0) {
-        const defaultShortage = 1;
+        const defaultShortage = 2;
         setDnQty(defaultShortage);
         setDnAmount(Math.round(defaultShortage * unitPrice));
       }

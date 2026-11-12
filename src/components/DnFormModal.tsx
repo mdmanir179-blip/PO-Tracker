@@ -34,7 +34,7 @@ const DEFAULT_DN: DnFormValues = {
   facilityName: '',
   parentPoDetails: '',
   dnSkuIdItemName: '',
-  dnQty: 0,
+  dnQty: 2,
   whPocDetails: '',
   lrNo: '',
   reportFileName: '',
@@ -86,7 +86,7 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
         facilityName: prefillFromPo.warehouseName,
         parentPoDetails: `${prefillFromPo.poNumber} | Inv: ${prefillFromPo.invoiceNo || 'N/A'} | Stage: ${prefillFromPo.workflowStage}`,
         dnSkuIdItemName: `${prefillFromPo.itemId} | ${prefillFromPo.itemName}`,
-        dnQty: Number(prefillFromPo.totalQty) || 0,
+        dnQty: typeof prefillFromPo.dnQty === 'number' && prefillFromPo.dnQty > 0 ? prefillFromPo.dnQty : 2,
         lrNo: prefillFromPo.pickupTrackingId || prefillFromPo.asn || '',
         whPocDetails: matchedPoc
           ? `${matchedPoc.pocName} · ${matchedPoc.contactNumber} · ${matchedPoc.emailId}`
@@ -117,7 +117,7 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
       facilityName: selectedPo.warehouseName,
       parentPoDetails: `${selectedPo.poNumber} | Inv: ${selectedPo.invoiceNo || 'N/A'} | Stage: ${selectedPo.workflowStage}`,
       dnSkuIdItemName: `${selectedPo.itemId} | ${selectedPo.itemName}`,
-      dnQty: Number(selectedPo.totalQty) || 0,
+      dnQty: typeof selectedPo.dnQty === 'number' && selectedPo.dnQty > 0 ? selectedPo.dnQty : 2,
       lrNo: selectedPo.pickupTrackingId || selectedPo.asn || prev.lrNo,
       whPocDetails: matchedPoc
         ? `${matchedPoc.pocName} · ${matchedPoc.contactNumber} · ${matchedPoc.emailId}`

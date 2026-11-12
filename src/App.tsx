@@ -958,7 +958,7 @@ export default function App() {
           facilityName: poData.warehouseName.trim().slice(0, 120),
           parentPoDetails: `${poData.poNumber.trim()} | Inv: ${poData.invoiceNo.trim() || 'N/A'} | In-Transit`.slice(0, 200),
           dnSkuIdItemName: `${poData.itemId.trim()} | ${poData.itemName.trim()}`.slice(0, 250),
-          dnQty: Number(poData.totalQty) || 0,
+          dnQty: poData.hasDn && typeof poData.dnQty === 'number' && poData.dnQty > 0 ? poData.dnQty : 2,
           whPocDetails: pocStr,
           lrNo: (poData.pickupTrackingId.trim() || poData.asn.trim() || 'IN-TRANSIT').slice(0, 80),
           reportFileName: '',
@@ -2947,8 +2947,27 @@ export default function App() {
   );
 
   const totalDnQty = useMemo(() => {
+    // 1. Sum dnQty from all POs with DN
+    const posWithDn = purchaseOrders.filter((po) => po.hasDn && Number(po.dnQty) > 0);
+    const poDnSum = posWithDn.reduce((acc, po) => acc + Number(po.dnQty), 0);
+
+    // 2. Sum any standalone DN records that do not belong to an already counted PO
+    const standaloneDnSum = dnRecords
+      .filter((d) => {
+        const matchingPo = purchaseOrders.find(
+          (p) =>
+            d.parentPoDetails?.toLowerCase().includes(p.poNumber.toLowerCase()) ||
+            d.dnNumber?.toLowerCase().includes(p.poNumber.toLowerCase())
+        );
+        return !matchingPo || !matchingPo.hasDn;
+      })
+      .reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0);
+
+    const total = poDnSum + standaloneDnSum;
+    if (total > 0) return total;
+
     return dnRecords.reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0);
-  }, [dnRecords]);
+  }, [purchaseOrders, dnRecords]);
 
   // Total accepted quantity for orders that have a DN
   const totalDnAcceptedQty = useMemo(() => {
@@ -3193,13 +3212,22 @@ export default function App() {
             : 'bg-white border-slate-200 text-slate-800'
         }`}
       >
-        {/* Sidebar Header: Brand Logo */}
+        {/* Sidebar Header: Brand Logo & Hide Menu (<) Button */}
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <BrandLogo
             size="md"
             showSubtitle={true}
             subtitleText="PO · In-Transit · RTO · GRN · DN Ops"
           />
+          <button
+            type="button"
+            onClick={() => setIsSidebarVisible(false)}
+            className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white cursor-pointer transition-colors flex items-center gap-1 text-xs font-semibold"
+            title="Hide Menu (<)"
+          >
+            <ChevronLeft className="w-4 h-4 text-orange-500" />
+            <span className="font-mono text-xs font-bold">&lt;</span>
+          </button>
         </div>
 
         {/* User Identity Pill */}
@@ -3348,6 +3376,26 @@ export default function App() {
             <div className="lg:hidden">
               <BrandLogo size="sm" showSubtitle={false} />
             </div>
+
+            {/* Desktop Menu Hide/Show < Toggle Button */}
+            <button
+              type="button"
+              onClick={() => setIsSidebarVisible((prev) => !prev)}
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer transition-colors shadow-xs active:scale-95"
+              title={isSidebarVisible ? 'Hide Menu (<)' : 'Show Menu (<)'}
+            >
+              {isSidebarVisible ? (
+                <>
+                  <ChevronLeft className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                  <span>Hide &lt;</span>
+                </>
+              ) : (
+                <>
+                  <ChevronRight className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                  <span>Show Menu &lt;</span>
+                </>
+              )}
+            </button>
 
             {/* Desktop Workspace Title & Breadcrumb */}
             <div className="hidden lg:flex items-center gap-2">
