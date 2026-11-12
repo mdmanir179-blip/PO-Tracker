@@ -281,10 +281,27 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         ? Math.max(0, ((totalOrderQty - totalDnQty) / totalOrderQty) * 100).toFixed(1)
         : '100.0';
 
+    const totalDnAcceptedQty = purchaseOrders
+      .filter(
+        (po) =>
+          po.hasDn ||
+          (po.dnQty && po.dnQty > 0) ||
+          dnRecords.some((d) => d.parentPoDetails?.toLowerCase().includes(po.poNumber.toLowerCase()))
+      )
+      .reduce((acc, po) => {
+        const dnQty = po.dnQty || 0;
+        const accepted =
+          typeof po.acceptedQty === 'number'
+            ? po.acceptedQty
+            : Math.max(0, (Number(po.totalQty) || 0) - dnQty);
+        return acc + accepted;
+      }, 0);
+
     return {
       totalPos,
       totalOrderQty,
       totalDnQty,
+      totalDnAcceptedQty,
       inTransitCount,
       avgInwardHoursGlobal,
       fulfillmentRate,
@@ -588,14 +605,29 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
         </div>
 
         <div>
-          <div className="text-xs font-semibold text-rose-600 dark:text-rose-400">
-            Instamart DN Tracker (Total Qty)
+          <div className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center justify-between">
+            <span>Instamart DN Tracker</span>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400">
+              {dnRecords.length} DN Notes
+            </span>
           </div>
-          <div className="text-2xl font-black font-mono tabular-nums mt-1 text-red-600 dark:text-red-400">
-            {overallMetrics.totalDnQty} <span className="text-xs font-semibold text-slate-500">Units</span>
+          <div className="mt-1 flex flex-wrap items-baseline gap-2">
+            <div className="flex items-baseline gap-1">
+              <span className="text-2xl font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                {overallMetrics.totalDnAcceptedQty}
+              </span>
+              <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">pcs Accepted</span>
+            </div>
+            <span className="text-xs text-slate-400 font-normal">/</span>
+            <div className="flex items-baseline gap-1">
+              <span className="text-lg font-bold font-mono tabular-nums text-red-600 dark:text-red-400">
+                {overallMetrics.totalDnQty}
+              </span>
+              <span className="text-xs font-semibold text-slate-500">DN Qty</span>
+            </div>
           </div>
-          <div className="text-[11px] text-slate-400 mt-0.5">
-            Total Discrepancy Qty Across {dnRecords.length} DN Notes
+          <div className="text-[11px] text-slate-400 mt-1">
+            {overallMetrics.totalDnAcceptedQty} pcs Accepted in GRN · {overallMetrics.totalDnQty} pcs shortage across {dnRecords.length} DN Notes
           </div>
         </div>
       </div>

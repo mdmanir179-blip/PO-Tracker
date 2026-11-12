@@ -181,6 +181,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('PO_ENTRY');
   const [isSidebarVisible, setIsSidebarVisible] = useState<boolean>(true);
+  const [printTeamFilter, setPrintTeamFilter] = useState<'PENDING' | 'VERIFIED' | 'ALL'>('PENDING');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const PAGE_SIZE = 10;
@@ -2715,18 +2716,23 @@ export default function App() {
     return list;
   }, [allFilteredPos, logisticsFilterMode, logisticsSignalFilterOnly]);
 
-  // Print Verification Team List: Pending verification (NO) always appears first, with last added items first!
+  // Print Verification Team List: Verified data is removed from Print Team queue by default (or can be viewed in Verified Archive)
   const printTeamList = useMemo(() => {
-    return allFilteredPos.slice().sort((a, b) => {
-      const aPending = a.printVerified !== 'YES';
-      const bPending = b.printVerified !== 'YES';
-      if (aPending && !bPending) return -1;
-      if (!aPending && bPending) return 1;
-
-      // Within pending or verified groups: Last added data in the first row!
-      return compareLastAddedFirst(a, b);
-    });
-  }, [allFilteredPos]);
+    return allFilteredPos
+      .filter((po) => {
+        if (isOrderGrn(po) || isOrderRto(po)) return false;
+        const isVerified = po.printVerified === 'YES';
+        if (printTeamFilter === 'PENDING') {
+          // Data that print team has verified is removed from print team queue!
+          return !isVerified && (po.workflowStage === 'PRINT_LOGISTICS' || po.printVerified === 'NO' || !po.printVerified);
+        }
+        if (printTeamFilter === 'VERIFIED') {
+          return isVerified;
+        }
+        return po.workflowStage === 'PRINT_LOGISTICS' || !isVerified;
+      })
+      .sort(compareLastAddedFirst);
+  }, [allFilteredPos, printTeamFilter]);
 
   // Authoritative unfiltered In Transit POs (always matches dashboard and tab count)
   const actualInTransitPos = useMemo(() => {
@@ -2944,8 +2950,35 @@ export default function App() {
     return dnRecords.reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0);
   }, [dnRecords]);
 
+  // Total accepted quantity for orders that have a DN
+  const totalDnAcceptedQty = useMemo(() => {
+    return purchaseOrders
+      .filter(
+        (po) =>
+          po.hasDn ||
+          (po.dnQty && po.dnQty > 0) ||
+          dnRecords.some((d) => d.parentPoDetails?.toLowerCase().includes(po.poNumber.toLowerCase()))
+      )
+      .reduce((acc, po) => {
+        const dnQty = po.dnQty || 0;
+        const accepted =
+          typeof po.acceptedQty === 'number'
+            ? po.acceptedQty
+            : Math.max(0, (Number(po.totalQty) || 0) - dnQty);
+        return acc + accepted;
+      }, 0);
+  }, [purchaseOrders, dnRecords]);
+
   const activePrintTeamCount = useMemo(() => {
-    return purchaseOrders.filter((po) => po.workflowStage === 'PRINT_LOGISTICS').length;
+    return purchaseOrders.filter((po) => {
+      if (po.printVerified === 'YES') return false;
+      if (isOrderGrn(po) || isOrderRto(po)) return false;
+      return po.workflowStage === 'PRINT_LOGISTICS' || po.printVerified === 'NO' || !po.printVerified;
+    }).length;
+  }, [purchaseOrders]);
+
+  const verifiedPrintTeamCount = useMemo(() => {
+    return purchaseOrders.filter((po) => po.printVerified === 'YES').length;
   }, [purchaseOrders]);
 
   const activeWarehouseCount = useMemo(() => {
@@ -3105,8 +3138,8 @@ export default function App() {
     },
     {
       id: 'DN_TRACKER',
-      label: `Instamart DN Tracker (${dnRecords.length} DNs · ${totalDnQty} Total Qty)`,
-      shortLabel: `DN (${totalDnQty} Qty)`,
+      label: `Instamart DN Tracker (${dnRecords.length} DNs · ${totalDnAcceptedQty} Accepted / ${totalDnQty} DN)`,
+      shortLabel: `DN (${totalDnAcceptedQty} Acc / ${totalDnQty} DN)`,
       badge: dnRecords.length,
       icon: <FileText className="w-4 h-4 shrink-0 text-rose-500" />,
     },
@@ -3160,21 +3193,13 @@ export default function App() {
             : 'bg-white border-slate-200 text-slate-800'
         }`}
       >
-        {/* Sidebar Header: Brand Logo & Toggle Button */}
+        {/* Sidebar Header: Brand Logo */}
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <BrandLogo
             size="md"
             showSubtitle={true}
             subtitleText="PO · In-Transit · RTO · GRN · DN Ops"
           />
-          <button
-            type="button"
-            onClick={() => setIsSidebarVisible(false)}
-            className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer transition-colors"
-            title="Hide Menu Bar"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
         </div>
 
         {/* User Identity Pill */}
@@ -3323,17 +3348,6 @@ export default function App() {
             <div className="lg:hidden">
               <BrandLogo size="sm" showSubtitle={false} />
             </div>
-
-            {/* Desktop Menu Bar Toggle Button */}
-            <button
-              type="button"
-              onClick={() => setIsSidebarVisible((prev) => !prev)}
-              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer transition-colors shadow-xs active:scale-95"
-              title={isSidebarVisible ? 'Hide Menu Bar' : 'Show Menu Bar'}
-            >
-              <Menu className="w-3.5 h-3.5 text-orange-500" />
-              <span>{isSidebarVisible ? 'Hide Menu' : 'Show Menu'}</span>
-            </button>
 
             {/* Desktop Workspace Title & Breadcrumb */}
             <div className="hidden lg:flex items-center gap-2">
@@ -3580,20 +3594,32 @@ export default function App() {
             {/* Metric 5: DN Tracker Records */}
             <div
               onClick={() => setActiveTab('DN_TRACKER')}
-              className="cursor-pointer transition-colors hover:bg-rose-500/5"
+              className="cursor-pointer transition-colors hover:bg-rose-500/5 p-2 rounded-lg"
             >
               <div className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center justify-between">
                 <span>Instamart DN Tracker</span>
-                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400">
                   {dnRecords.length} DNs
                 </span>
               </div>
-              <div className="text-xl sm:text-2xl font-black font-mono tabular-nums mt-1 text-rose-600 dark:text-rose-400 flex items-baseline gap-1">
-                <span>{totalDnQty}</span>
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Total Qty</span>
+              <div className="mt-1 flex flex-wrap items-baseline gap-2">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-xl sm:text-2xl font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {totalDnAcceptedQty}
+                  </span>
+                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">pcs Accepted</span>
+                </div>
+                <span className="text-xs text-slate-400 font-normal">/</span>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-base sm:text-lg font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
+                    {totalDnQty}
+                  </span>
+                  <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">DN Qty</span>
+                </div>
               </div>
-              <div className="text-[11px] text-slate-400 mt-0.5">
-                Total Discrepancy Qty Across {dnRecords.length} DN Note(s)
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
+                <span>Total Accepted: {totalDnAcceptedQty} pcs</span>
+                <span className="font-mono font-bold text-rose-600 dark:text-rose-400">-{totalDnQty} pcs DN</span>
               </div>
             </div>
           </div>
@@ -5033,21 +5059,55 @@ export default function App() {
                 : 'bg-white border-slate-200'
             }`}
           >
-            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-bold flex items-center gap-2">
                   <Printer className="w-4 h-4 text-orange-500" />
                   <span>Print Verification Team — PO Slip & Invoice Print Verification</span>
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Print Delivery Challan, Tax Invoice &amp; PO Copy. Once verified, orders automatically move to Warehouse for box packaging &amp; dispatch.
+                  Print Delivery Challan, Tax Invoice &amp; PO Copy. Once verified, orders automatically clear from this queue and move to Warehouse for box packaging &amp; dispatch.
                 </p>
+              </div>
+
+              {/* View filter: Pending (default) vs Verified History */}
+              <div className="flex items-center gap-1.5 p-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950/60 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrintTeamFilter('PENDING');
+                    setCurrentPage(1);
+                  }}
+                  className={`px-3 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
+                    printTeamFilter === 'PENDING'
+                      ? 'bg-orange-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Pending Verification ({activePrintTeamCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPrintTeamFilter('VERIFIED');
+                    setCurrentPage(1);
+                  }}
+                  className={`px-3 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
+                    printTeamFilter === 'VERIFIED'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  Verified Archive ({verifiedPrintTeamCount})
+                </button>
               </div>
             </div>
 
             {printTeamList.length === 0 ? (
               <div className="p-10 text-center text-xs text-slate-500">
-                No Purchase Orders available for print verification.
+                {printTeamFilter === 'PENDING'
+                  ? 'All purchase orders have been verified and moved to Warehouse packaging! No pending print tasks.'
+                  : 'No verified orders found in the archive.'}
               </div>
             ) : (
               <>
@@ -5945,6 +6005,15 @@ export default function App() {
                   <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Logged DN Records</div>
                   <div className="text-xl sm:text-2xl font-bold font-mono text-slate-900 dark:text-white">
                     {dnRecords.length} <span className="text-xs font-normal text-slate-400">DNs</span>
+                  </div>
+                </div>
+                <div className="h-10 w-px bg-slate-300 dark:bg-slate-700" />
+                <div className="text-right">
+                  <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider">
+                    Accepted in GRN
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-black font-mono text-emerald-600 dark:text-emerald-400">
+                    {totalDnAcceptedQty} <span className="text-xs font-semibold">pcs</span>
                   </div>
                 </div>
                 <div className="h-10 w-px bg-slate-300 dark:bg-slate-700" />
