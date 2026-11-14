@@ -48,6 +48,8 @@ import {
   Smartphone,
   CreditCard,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   LayoutDashboard,
   Warehouse as WarehouseIcon,
 } from 'lucide-react';
@@ -178,6 +180,7 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('PO_ENTRY');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [printTeamFilter, setPrintTeamFilter] = useState<'PENDING' | 'VERIFIED' | 'ALL'>('PENDING');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -3197,7 +3200,9 @@ export default function App() {
       {/* 1. LEFT SIDEBAR NAVIGATION (Desktop & Tablet >= lg)      */}
       {/* ======================================================== */}
       <aside
-        className={`hidden lg:flex flex-col w-64 xl:w-72 shrink-0 h-screen sticky top-0 z-40 border-r select-none transition-all duration-200 ${
+        className={`hidden lg:flex flex-col ${
+          isSidebarCollapsed ? 'w-[68px]' : 'w-64 xl:w-72'
+        } shrink-0 h-screen sticky top-0 z-40 border-r select-none transition-all duration-200 ${
           darkMode
             ? 'bg-slate-900 border-slate-800 text-slate-200'
             : isGrey
@@ -3205,40 +3210,70 @@ export default function App() {
             : 'bg-white border-slate-200 text-slate-800'
         }`}
       >
-        {/* Sidebar Header: Brand Logo */}
-        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-          <BrandLogo
-            size="md"
-            showSubtitle={true}
-            subtitleText="PO · In-Transit · RTO · GRN · DN Ops"
-          />
+        {/* Sidebar Header: Brand Logo + Menu Hide / Show Symbol */}
+        <div
+          className={`${
+            isSidebarCollapsed ? 'px-2 py-3.5 justify-center' : 'p-4 justify-between'
+          } border-b border-slate-200 dark:border-slate-800 flex items-center gap-2`}
+        >
+          {!isSidebarCollapsed && (
+            <BrandLogo
+              size="md"
+              showSubtitle={true}
+              subtitleText="PO · In-Transit · RTO · GRN · DN Ops"
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+            className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-orange-500/10 hover:border-orange-500/40 text-slate-500 hover:text-orange-600 dark:text-slate-400 dark:hover:text-orange-400 cursor-pointer transition-colors shrink-0"
+            title={isSidebarCollapsed ? 'Show Menu' : 'Hide Menu'}
+            aria-label={isSidebarCollapsed ? 'Show Menu' : 'Hide Menu'}
+          >
+            {isSidebarCollapsed ? (
+              <PanelLeftOpen className="w-4 h-4" />
+            ) : (
+              <PanelLeftClose className="w-4 h-4" />
+            )}
+          </button>
         </div>
 
         {/* User Identity Pill */}
-        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-500/5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-bold truncate" title={employeeProfile.employeeName}>
-              {employeeProfile.employeeName}
-            </span>
-            <span className="font-mono text-[10px] text-slate-400">
-              #{employeeProfile.employeeId}
-            </span>
+        {isSidebarCollapsed ? (
+          <div
+            className="px-2 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-500/5 flex flex-col items-center justify-center gap-1"
+            title={`${employeeProfile.employeeName} (#${employeeProfile.employeeId}) · ${employeeProfile.role}`}
+          >
+            <div className="w-8 h-8 rounded-full bg-orange-500/15 border border-orange-500/40 text-orange-600 dark:text-orange-400 flex items-center justify-center font-bold text-xs uppercase">
+              {(employeeProfile.employeeName || 'U').slice(0, 2)}
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
-            <span className="text-[10px] uppercase font-bold text-orange-600 dark:text-orange-400">
-              {employeeProfile.role}
-            </span>
-            {isAdmin && (
-              <span className="text-[9px] px-1.5 py-0.2 rounded bg-orange-500/20 text-orange-600 dark:text-orange-400 font-extrabold ml-auto">
-                ADMIN
+        ) : (
+          <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-500/5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold truncate" title={employeeProfile.employeeName}>
+                {employeeProfile.employeeName}
               </span>
-            )}
+              <span className="font-mono text-[10px] text-slate-400">
+                #{employeeProfile.employeeId}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+              <span className="text-[10px] uppercase font-bold text-orange-600 dark:text-orange-400">
+                {employeeProfile.role}
+              </span>
+              {isAdmin && (
+                <span className="text-[9px] px-1.5 py-0.2 rounded bg-orange-500/20 text-orange-600 dark:text-orange-400 font-extrabold ml-auto">
+                  ADMIN
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Vertical Navigation Tabs List */}
-        <nav className="flex-1 overflow-y-auto p-2.5 space-y-1 text-xs">
+        <nav className="flex-1 overflow-y-auto p-2 space-y-1 text-xs">
           {navTabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
@@ -3246,7 +3281,10 @@ export default function App() {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center justify-between gap-2.5 px-3 py-2.5 rounded-xl font-medium transition-all text-left cursor-pointer group ${
+                title={tab.label}
+                className={`w-full flex items-center ${
+                  isSidebarCollapsed ? 'justify-center px-2 py-2.5' : 'justify-between gap-2.5 px-3 py-2.5'
+                } rounded-xl font-medium transition-all text-left cursor-pointer group relative ${
                   isActive
                     ? 'bg-gradient-to-r from-orange-600 to-amber-600 text-white font-bold shadow-md shadow-orange-500/25'
                     : darkMode
@@ -3260,9 +3298,9 @@ export default function App() {
                   <span className={isActive ? 'text-white' : 'text-slate-400 group-hover:text-orange-500'}>
                     {tab.icon}
                   </span>
-                  <span className="truncate">{tab.label}</span>
+                  {!isSidebarCollapsed && <span className="truncate">{tab.label}</span>}
                 </div>
-                {tab.badge !== undefined && (
+                {tab.badge !== undefined && !isSidebarCollapsed && (
                   <span
                     className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 tabular-nums ${
                       isActive
@@ -3275,58 +3313,66 @@ export default function App() {
                     {tab.badge}
                   </span>
                 )}
+                {tab.badge !== undefined && isSidebarCollapsed && Number(tab.badge) > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-orange-500" />
+                )}
               </button>
             );
           })}
         </nav>
 
         {/* Sidebar Footer: System Clock + Theme Switcher + Logout */}
-        <div className="p-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
-          {/* Live System Time */}
-          <div className="flex items-center justify-between px-2 text-[11px] font-mono text-slate-400">
-            <span>{formattedLiveDate}</span>
-            <span className="font-bold text-orange-600 dark:text-orange-400">{formattedLiveTime}</span>
-          </div>
+        <div className="p-2.5 border-t border-slate-200 dark:border-slate-800 space-y-2">
+          {!isSidebarCollapsed && (
+            <>
+              {/* Live System Time */}
+              <div className="flex items-center justify-between px-2 text-[11px] font-mono text-slate-400">
+                <span>{formattedLiveDate}</span>
+                <span className="font-bold text-orange-600 dark:text-orange-400">{formattedLiveTime}</span>
+              </div>
 
-          {/* Theme switcher */}
-          <div className="flex items-center justify-between gap-1 p-1 rounded-lg bg-slate-500/10 text-xs">
-            <button
-              type="button"
-              onClick={() => setThemeMode('light')}
-              className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
-                themeMode === 'light' ? 'bg-white text-orange-600 shadow-xs' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Light
-            </button>
-            <button
-              type="button"
-              onClick={() => setThemeMode('grey')}
-              className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
-                themeMode === 'grey' ? 'bg-zinc-700 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Grey
-            </button>
-            <button
-              type="button"
-              onClick={() => setThemeMode('dark')}
-              className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
-                themeMode === 'dark' ? 'bg-slate-950 text-amber-400 shadow-xs' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Dark
-            </button>
-          </div>
+              {/* Theme switcher */}
+              <div className="flex items-center justify-between gap-1 p-1 rounded-lg bg-slate-500/10 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setThemeMode('light')}
+                  className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
+                    themeMode === 'light' ? 'bg-white text-orange-600 shadow-xs' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Light
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setThemeMode('grey')}
+                  className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
+                    themeMode === 'grey' ? 'bg-zinc-700 text-white shadow-xs' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Grey
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setThemeMode('dark')}
+                  className={`flex-1 py-1 rounded text-center text-[10px] font-bold cursor-pointer transition-colors ${
+                    themeMode === 'dark' ? 'bg-slate-950 text-amber-400 shadow-xs' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Dark
+                </button>
+              </div>
+            </>
+          )}
 
           {/* Logout button */}
           <button
             type="button"
             onClick={logout}
+            title="Sign Out"
             className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10 text-xs font-semibold cursor-pointer transition-colors"
           >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            {!isSidebarCollapsed && <span>Sign Out</span>}
           </button>
         </div>
       </aside>
