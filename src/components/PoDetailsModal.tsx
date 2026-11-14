@@ -367,7 +367,27 @@ export const PoDetailsModal: React.FC<PoDetailsModalProps> = ({
                         {item.qty}
                       </td>
                       <td className="py-2.5 px-3 font-mono text-slate-600 dark:text-slate-300">
-                        {item.boxDimensions ? (
+                        {Array.isArray(item.boxes) && item.boxes.length > 0 ? (
+                          <div className="space-y-1">
+                            {item.boxes.map((box, bIdx) => (
+                              <div
+                                key={box.id || bIdx}
+                                className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold border border-amber-500/20 text-[11px] flex items-center justify-between gap-2"
+                              >
+                                <span>
+                                  Box {bIdx + 1}
+                                  {box.boxCount > 1 ? ` (×${box.boxCount})` : ''}:{' '}
+                                  {box.boxDimensions || 'N/A'}
+                                </span>
+                                {box.chargeableWeightKg > 0 && (
+                                  <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                    {box.chargeableWeightKg.toFixed(2)} kg
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : item.boxDimensions ? (
                           <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-semibold border border-amber-500/20">
                             {item.boxDimensions}
                           </span>
@@ -380,7 +400,12 @@ export const PoDetailsModal: React.FC<PoDetailsModalProps> = ({
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-center font-mono">
-                        {item.noOfBoxes || (displayItems.length === 1 ? po.noOfBoxes : '-')}
+                        <div>{item.noOfBoxes || (displayItems.length === 1 ? po.noOfBoxes : '-')}</div>
+                        {item.boxWeight && (
+                          <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                            {item.boxWeight}
+                          </div>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         <span

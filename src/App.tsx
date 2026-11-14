@@ -44,11 +44,9 @@ import {
   BellRing,
   Calendar,
   ChevronRight,
-  ChevronLeft,
   WifiOff,
   Smartphone,
   CreditCard,
-  Radio,
   Menu,
   LayoutDashboard,
   Warehouse as WarehouseIcon,
@@ -180,7 +178,6 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('PO_ENTRY');
-  const [isSidebarVisible, setIsSidebarVisible] = useState<boolean>(true);
   const [printTeamFilter, setPrintTeamFilter] = useState<'PENDING' | 'VERIFIED' | 'ALL'>('PENDING');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -265,7 +262,6 @@ export default function App() {
   });
 
   // Ops Notifications & Alert Center State
-  const [logisticsSignalFilterOnly, setLogisticsSignalFilterOnly] = useState<boolean>(false);
   const [logisticsFilterMode, setLogisticsFilterMode] = useState<'ACTIVE' | 'DELIVERED' | 'ALL'>('ACTIVE');
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
@@ -1669,10 +1665,15 @@ export default function App() {
   const handleWarehouseUpdateBoxDimensions = async (payload: WarehouseBoxUpdatePayload) => {
     if (!firebaseUser || !employeeProfile) return;
     try {
+      const safeBoxDims = (payload.boxDimensions || '').trim().slice(0, 100);
+      const safeNoOfBoxes = Math.max(0, Number(payload.noOfBoxes) || 0);
       const updateData: any = {
-        noOfBoxes: payload.noOfBoxes,
-        boxDimensions: payload.boxDimensions,
+        noOfBoxes: safeNoOfBoxes,
+        boxDimensions: safeBoxDims,
         lineItems: payload.lineItems,
+        updatedByUid: firebaseUser.uid,
+        updatedByName: employeeProfile.employeeName.slice(0, 100),
+        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
         updatedAt: serverTimestamp(),
       };
       if (payload.markReady) {
@@ -1687,7 +1688,7 @@ export default function App() {
           : 'Updated Box Dimensions & Packaging',
         'WAREHOUSE',
         payload.poNumber || payload.poId,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${payload.boxDimensions}) & ${payload.noOfBoxes} boxes for PO ${
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${safeBoxDims}) & ${safeNoOfBoxes} boxes for PO ${
           payload.poNumber || payload.poId
         }${
           payload.markReady
@@ -2707,14 +2708,8 @@ export default function App() {
       list = list.filter((po) => isOrderGrn(po) && !isOrderRto(po));
     }
 
-    if (logisticsSignalFilterOnly) {
-      list = list.filter((po) => {
-        const ship = getShipmentDateStatus(po.shipDate);
-        return ship.isToday;
-      });
-    }
     return list;
-  }, [allFilteredPos, logisticsFilterMode, logisticsSignalFilterOnly]);
+  }, [allFilteredPos, logisticsFilterMode]);
 
   // Print Verification Team List: Verified data is removed from Print Team queue by default (or can be viewed in Verified Archive)
   const printTeamList = useMemo(() => {
@@ -3202,9 +3197,7 @@ export default function App() {
       {/* 1. LEFT SIDEBAR NAVIGATION (Desktop & Tablet >= lg)      */}
       {/* ======================================================== */}
       <aside
-        className={`${
-          isSidebarVisible ? 'hidden lg:flex' : 'hidden'
-        } flex-col w-64 xl:w-72 shrink-0 h-screen sticky top-0 z-40 border-r select-none transition-all duration-200 ${
+        className={`hidden lg:flex flex-col w-64 xl:w-72 shrink-0 h-screen sticky top-0 z-40 border-r select-none transition-all duration-200 ${
           darkMode
             ? 'bg-slate-900 border-slate-800 text-slate-200'
             : isGrey
@@ -3212,22 +3205,13 @@ export default function App() {
             : 'bg-white border-slate-200 text-slate-800'
         }`}
       >
-        {/* Sidebar Header: Brand Logo & Hide Menu (<) Button */}
+        {/* Sidebar Header: Brand Logo */}
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <BrandLogo
             size="md"
             showSubtitle={true}
             subtitleText="PO · In-Transit · RTO · GRN · DN Ops"
           />
-          <button
-            type="button"
-            onClick={() => setIsSidebarVisible(false)}
-            className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white cursor-pointer transition-colors flex items-center gap-1 text-xs font-semibold"
-            title="Hide Menu (<)"
-          >
-            <ChevronLeft className="w-4 h-4 text-orange-500" />
-            <span className="font-mono text-xs font-bold">&lt;</span>
-          </button>
         </div>
 
         {/* User Identity Pill */}
@@ -3376,26 +3360,6 @@ export default function App() {
             <div className="lg:hidden">
               <BrandLogo size="sm" showSubtitle={false} />
             </div>
-
-            {/* Desktop Menu Hide/Show < Toggle Button */}
-            <button
-              type="button"
-              onClick={() => setIsSidebarVisible((prev) => !prev)}
-              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer transition-colors shadow-xs active:scale-95"
-              title={isSidebarVisible ? 'Hide Menu (<)' : 'Show Menu (<)'}
-            >
-              {isSidebarVisible ? (
-                <>
-                  <ChevronLeft className="w-3.5 h-3.5 text-orange-500 shrink-0" />
-                  <span>Hide &lt;</span>
-                </>
-              ) : (
-                <>
-                  <ChevronRight className="w-3.5 h-3.5 text-orange-500 shrink-0" />
-                  <span>Show Menu &lt;</span>
-                </>
-              )}
-            </button>
 
             {/* Desktop Workspace Title & Breadcrumb */}
             <div className="hidden lg:flex items-center gap-2">
@@ -4546,88 +4510,6 @@ export default function App() {
                   : 'bg-white border-slate-200'
               }`}
             >
-              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-sm font-bold flex items-center gap-2">
-                    <Truck className="w-4 h-4 text-orange-500" />
-                    <span>
-                      Logistics Department — Add Logistics Delivery, Dispatch Tracking & Log DN Notes
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Add or update Logistics Delivery details (Logistics Partner, Tracking/LR ID, PUC, ASN, Boxes, Pickup Status) and directly create DN Notes for any shipment.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {canUserManageLogistics && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingPo(null);
-                        setIsPoModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ Add Logistics Delivery</span>
-                    </button>
-                  )}
-                  {canUserManageDn && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingDn(null);
-                        setPrefillDnFromPo(null);
-                        setIsDnModalOpen(true);
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ Create DN Note</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Live Signal Alert Banner for Today's Pickups */}
-              {logisticsTodaySignalPos.length > 0 && (
-                <div className="px-4 sm:px-6 py-2.5 bg-emerald-500/10 border-b border-emerald-500/25 flex flex-wrap items-center justify-between gap-2.5 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="relative flex h-3 w-3 shrink-0">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                    </span>
-                    <span className="font-bold text-slate-900 dark:text-white">
-                      ⚡ Live Pickup Signals:
-                    </span>
-                    <span className="text-slate-700 dark:text-slate-300">
-                      <strong className="text-emerald-600 dark:text-emerald-400 font-bold">
-                        {logisticsTodaySignalPos.length} Purchase Order{logisticsTodaySignalPos.length === 1 ? '' : 's'}
-                      </strong>{' '}
-                      scheduled for Pickup <strong>TODAY</strong>!
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setLogisticsSignalFilterOnly((prev) => !prev)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5 shadow-xs ${
-                        logisticsSignalFilterOnly
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-500/30'
-                      }`}
-                    >
-                      <Radio className="w-3.5 h-3.5" />
-                      <span>
-                        {logisticsSignalFilterOnly
-                          ? 'Show All Deliveries'
-                          : `Filter Pickup Today (${logisticsTodaySignalPos.length})`}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
               {/* Logistics Filter Mode Tabs (Active Deliveries / Delivered / All) */}
               <div className="px-4 sm:px-6 py-2.5 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-1.5 p-1 bg-slate-200/70 dark:bg-slate-800 rounded-lg">
@@ -4689,8 +4571,6 @@ export default function App() {
                       ? 'No pending deliveries in active queue.'
                       : logisticsFilterMode === 'DELIVERED'
                       ? 'No delivered orders in history.'
-                      : logisticsSignalFilterOnly
-                      ? 'No Purchase Orders with Pickup scheduled for Today.'
                       : 'No Purchase Orders or Logistics deliveries found.'}
                   </div>
                   {logisticsFilterMode === 'ACTIVE' && deliveredLogisticsCount > 0 && (
@@ -4700,15 +4580,6 @@ export default function App() {
                       className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer"
                     >
                       View Delivered Orders ({deliveredLogisticsCount})
-                    </button>
-                  )}
-                  {logisticsSignalFilterOnly && (
-                    <button
-                      type="button"
-                      onClick={() => setLogisticsSignalFilterOnly(false)}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer"
-                    >
-                      Show All Logistics Deliveries
                     </button>
                   )}
                 </div>

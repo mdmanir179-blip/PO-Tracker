@@ -50,6 +50,15 @@ export interface ProductCatalogItem {
   updatedAt?: Timestamp | Date | string;
 }
 
+export interface ProductBoxEntry {
+  id: string;
+  boxDimensions: string;
+  boxCount: number;
+  actualWeightKg: number;
+  volumetricWeightKg: number;
+  chargeableWeightKg: number;
+}
+
 export interface PoLineItem {
   itemId: string;
   itemName: string;
@@ -57,6 +66,7 @@ export interface PoLineItem {
   boxDimensions?: string;
   noOfBoxes?: number;
   boxWeight?: string;
+  boxes?: ProductBoxEntry[];
   packedStatus?: 'PENDING' | 'PACKED';
 }
 

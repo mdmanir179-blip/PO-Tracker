@@ -21,9 +21,122 @@ import {
   Trash2,
   Save,
   RotateCcw,
+  Scale,
 } from 'lucide-react';
-import { PurchaseOrder, PoLineItem, TeamRole, WarehouseStatus, compareLastAddedFirst } from '../types';
+import {
+  PurchaseOrder,
+  PoLineItem,
+  ProductBoxEntry,
+  TeamRole,
+  WarehouseStatus,
+  compareLastAddedFirst,
+} from '../types';
 import { Pagination } from './Pagination';
+
+function createBoxId(): string {
+  return `box_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/**
+ * Parses dimension strings like "40x30x20", "40 x 30 x 20 cm", "40*30*20"
+ */
+export function parseBoxDimensions(
+  dimStr?: string
+): { l: number; w: number; h: number } | null {
+  if (!dimStr || typeof dimStr !== 'string') return null;
+  const match = dimStr
+    .trim()
+    .match(/(\d+(?:\.\d+)?)\s*[xX*×]\s*(\d+(?:\.\d+)?)\s*[xX*×]\s*(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const l = parseFloat(match[1]);
+  const w = parseFloat(match[2]);
+  const h = parseFloat(match[3]);
+  if (!Number.isFinite(l) || !Number.isFinite(w) || !Number.isFinite(h) || l <= 0 || w <= 0 || h <= 0) {
+    return null;
+  }
+  return { l, w, h };
+}
+
+/**
+ * Standard courier volumetric weight in kg: (L x W x H cm) / 5000
+ */
+export function calculateVolumetricWeightKg(dimStr?: string): number {
+  const parsed = parseBoxDimensions(dimStr);
+  if (!parsed) return 0;
+  return Number(((parsed.l * parsed.w * parsed.h) / 5000).toFixed(2));
+}
+
+export function computeBoxEntry(entry: Partial<ProductBoxEntry>): ProductBoxEntry {
+  const boxCount = Math.max(1, Math.floor(Number(entry.boxCount) || 1));
+  const actualWeightKg = Math.max(0, Number(entry.actualWeightKg) || 0);
+  const boxDimensions = String(entry.boxDimensions || '').slice(0, 60);
+  const volumetricWeightKg = calculateVolumetricWeightKg(boxDimensions);
+  const perBoxEffective = Math.max(actualWeightKg, volumetricWeightKg);
+  const chargeableWeightKg = Number((perBoxEffective * boxCount).toFixed(2));
+
+  return {
+    id: entry.id || createBoxId(),
+    boxDimensions,
+    boxCount,
+    actualWeightKg: Number(actualWeightKg.toFixed(2)),
+    volumetricWeightKg,
+    chargeableWeightKg,
+  };
+}
+
+export function computeLineItemBoxSummary(item: PoLineItem): {
+  boxes: ProductBoxEntry[];
+  totalBoxes: number;
+  totalActualKg: number;
+  totalVolumetricKg: number;
+  totalChargeableKg: number;
+  dimSummary: string;
+} {
+  const rawBoxes =
+    Array.isArray(item.boxes) && item.boxes.length > 0
+      ? item.boxes
+      : [
+          computeBoxEntry({
+            boxDimensions: item.boxDimensions || '',
+            boxCount: item.noOfBoxes || 1,
+            actualWeightKg: item.boxWeight
+              ? (parseFloat(String(item.boxWeight).replace(/[^\d.]/g, '')) || 0) /
+                Math.max(1, item.noOfBoxes || 1)
+              : 0,
+          }),
+        ];
+
+  const boxes = rawBoxes.map(computeBoxEntry);
+  const totalBoxes = boxes.reduce((sum, b) => sum + b.boxCount, 0);
+  const totalActualKg = Number(
+    boxes.reduce((sum, b) => sum + b.actualWeightKg * b.boxCount, 0).toFixed(2)
+  );
+  const totalVolumetricKg = Number(
+    boxes.reduce((sum, b) => sum + b.volumetricWeightKg * b.boxCount, 0).toFixed(2)
+  );
+  const totalChargeableKg = Number(
+    boxes.reduce((sum, b) => sum + b.chargeableWeightKg, 0).toFixed(2)
+  );
+
+  const nonEmptyDims = boxes
+    .filter((b) => b.boxDimensions.trim().length > 0)
+    .map((b) =>
+      b.boxCount > 1 ? `${b.boxDimensions.trim()} (x${b.boxCount})` : b.boxDimensions.trim()
+    );
+  const dimSummary =
+    nonEmptyDims.length > 0
+      ? nonEmptyDims.join(', ').slice(0, 100)
+      : (item.boxDimensions || '').trim().slice(0, 100);
+
+  return {
+    boxes,
+    totalBoxes,
+    totalActualKg,
+    totalVolumetricKg,
+    totalChargeableKg,
+    dimSummary,
+  };
+}
 
 export interface WarehouseBoxUpdatePayload {
   poId: string;
@@ -81,10 +194,11 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
 }) => {
   const [statusFilter, setStatusFilter] = useState<'ALL_ACTIVE' | 'PENDING' | 'PROCESSING' | 'READY_FOR_DISPATCH' | 'PICKED_UP'>('ALL_ACTIVE');
   
-  // Modal state for editing individual product box dimensions
+  // Modal state for editing individual product box dimensions & multi-box weights
   const [editingBoxPo, setEditingBoxPo] = useState<PurchaseOrder | null>(null);
   const [masterBoxCount, setMasterBoxCount] = useState<number>(1);
   const [masterBoxDim, setMasterBoxDim] = useState<string>('');
+  const [isMasterDimManual, setIsMasterDimManual] = useState<boolean>(false);
   const [lineItemsState, setLineItemsState] = useState<PoLineItem[]>([]);
   const [isSavingBox, setIsSavingBox] = useState(false);
 
@@ -191,47 +305,201 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
       .sort(compareLastAddedFirst);
   }, [activeWarehouseOrders, pickedUpOrders, statusFilter, searchQuery]);
 
-  // Open Edit Box Dimensions Modal
-  const handleOpenBoxModal = (po: PurchaseOrder) => {
-    setEditingBoxPo(po);
-    setMasterBoxCount(po.noOfBoxes || 1);
-    setMasterBoxDim(po.boxDimensions || '');
+  // Recalculate per-product & overall master totals whenever boxes change
+  const syncLineItemsAndTotals = (
+    items: PoLineItem[],
+    overrideManualMasterDim: boolean = false
+  ) => {
+    const normalizedItems: PoLineItem[] = items.map((item) => {
+      const summary = computeLineItemBoxSummary(item);
+      return {
+        itemId: item.itemId,
+        itemName: item.itemName,
+        qty: Number(item.qty) || 0,
+        boxDimensions: summary.dimSummary,
+        noOfBoxes: summary.totalBoxes,
+        boxWeight: summary.totalChargeableKg > 0 ? `${summary.totalChargeableKg.toFixed(2)} kg` : '',
+        boxes: summary.boxes,
+        packedStatus: item.packedStatus || 'PENDING',
+      };
+    });
 
-    if (Array.isArray(po.lineItems) && po.lineItems.length > 0) {
-      setLineItemsState(
-        po.lineItems.map((item) => ({
-          ...item,
-          boxDimensions: item.boxDimensions || po.boxDimensions || '',
-          noOfBoxes: item.noOfBoxes || 1,
-          packedStatus: item.packedStatus || 'PENDING',
-        }))
-      );
-    } else {
-      setLineItemsState([
-        {
-          itemId: po.itemId,
-          itemName: po.itemName,
-          qty: po.totalQty,
-          boxDimensions: po.boxDimensions || '',
-          noOfBoxes: po.noOfBoxes || 1,
-          packedStatus: 'PENDING',
-        },
-      ]);
+    const totalBoxes = normalizedItems.reduce((sum, it) => sum + (it.noOfBoxes || 1), 0);
+    setLineItemsState(normalizedItems);
+    setMasterBoxCount(Math.max(1, totalBoxes));
+
+    if (!isMasterDimManual || overrideManualMasterDim) {
+      const allDims = normalizedItems
+        .map((it) => it.boxDimensions || '')
+        .filter((d) => d.trim().length > 0);
+      if (allDims.length > 0) {
+        const uniqueSummary = Array.from(new Set(allDims)).join(' | ').slice(0, 100);
+        setMasterBoxDim(uniqueSummary);
+      }
     }
   };
 
-  // Submit Box Dimensions
+  // Shipment-wide auto-calculated weight metrics for the open modal
+  const modalWeightTotals = useMemo(() => {
+    let totalBoxes = 0;
+    let totalActualKg = 0;
+    let totalVolumetricKg = 0;
+    let totalChargeableKg = 0;
+
+    for (const item of lineItemsState) {
+      const s = computeLineItemBoxSummary(item);
+      totalBoxes += s.totalBoxes;
+      totalActualKg += s.totalActualKg;
+      totalVolumetricKg += s.totalVolumetricKg;
+      totalChargeableKg += s.totalChargeableKg;
+    }
+
+    return {
+      totalBoxes,
+      totalActualKg: Number(totalActualKg.toFixed(2)),
+      totalVolumetricKg: Number(totalVolumetricKg.toFixed(2)),
+      totalChargeableKg: Number(totalChargeableKg.toFixed(2)),
+    };
+  }, [lineItemsState]);
+
+  // Open Edit Box Dimensions Modal
+  const handleOpenBoxModal = (po: PurchaseOrder) => {
+    setEditingBoxPo(po);
+    setIsMasterDimManual(false);
+
+    const baseItems: PoLineItem[] =
+      Array.isArray(po.lineItems) && po.lineItems.length > 0
+        ? po.lineItems
+        : [
+            {
+              itemId: po.itemId,
+              itemName: po.itemName,
+              qty: po.totalQty,
+              boxDimensions: po.boxDimensions || '',
+              noOfBoxes: po.noOfBoxes || 1,
+              packedStatus: 'PENDING',
+            },
+          ];
+
+    const initialized: PoLineItem[] = baseItems.map((item) => {
+      const summary = computeLineItemBoxSummary({
+        ...item,
+        boxDimensions: item.boxDimensions || po.boxDimensions || '',
+        noOfBoxes: item.noOfBoxes || (baseItems.length === 1 ? po.noOfBoxes || 1 : 1),
+      });
+      return {
+        itemId: item.itemId,
+        itemName: item.itemName,
+        qty: Number(item.qty) || 0,
+        boxDimensions: summary.dimSummary,
+        noOfBoxes: summary.totalBoxes,
+        boxWeight: summary.totalChargeableKg > 0 ? `${summary.totalChargeableKg.toFixed(2)} kg` : '',
+        boxes: summary.boxes,
+        packedStatus: item.packedStatus || 'PENDING',
+      };
+    });
+
+    const totalBoxes = initialized.reduce((sum, it) => sum + (it.noOfBoxes || 1), 0);
+    setLineItemsState(initialized);
+    setMasterBoxCount(po.noOfBoxes || totalBoxes || 1);
+    setMasterBoxDim(po.boxDimensions || '');
+  };
+
+  // Add another box for a specific product
+  const handleAddBoxToProduct = (itemIdx: number) => {
+    const updated = lineItemsState.map((item, idx) => {
+      if (idx !== itemIdx) return item;
+      const existingBoxes = computeLineItemBoxSummary(item).boxes;
+      const newBox = computeBoxEntry({
+        id: createBoxId(),
+        boxDimensions: '',
+        boxCount: 1,
+        actualWeightKg: 0,
+      });
+      return {
+        ...item,
+        boxes: [...existingBoxes, newBox],
+      };
+    });
+    syncLineItemsAndTotals(updated);
+  };
+
+  // Remove a box from a specific product
+  const handleRemoveBoxFromProduct = (itemIdx: number, boxIdx: number) => {
+    const updated = lineItemsState.map((item, idx) => {
+      if (idx !== itemIdx) return item;
+      const existingBoxes = computeLineItemBoxSummary(item).boxes;
+      if (existingBoxes.length <= 1) return item;
+      return {
+        ...item,
+        boxes: existingBoxes.filter((_, bIdx) => bIdx !== boxIdx),
+      };
+    });
+    syncLineItemsAndTotals(updated);
+  };
+
+  // Update a specific box field on a product
+  const handleUpdateProductBox = (
+    itemIdx: number,
+    boxIdx: number,
+    patch: Partial<ProductBoxEntry>
+  ) => {
+    const updated = lineItemsState.map((item, idx) => {
+      if (idx !== itemIdx) return item;
+      const existingBoxes = computeLineItemBoxSummary(item).boxes;
+      const nextBoxes = existingBoxes.map((box, bIdx) =>
+        bIdx === boxIdx ? computeBoxEntry({ ...box, ...patch }) : box
+      );
+      return {
+        ...item,
+        boxes: nextBoxes,
+      };
+    });
+    syncLineItemsAndTotals(updated);
+  };
+
+  // Submit Box Dimensions & Calculated Weights
   const handleSaveBoxDimensions = async (e?: React.FormEvent, markReady: boolean = false) => {
     if (e) e.preventDefault();
     if (!editingBoxPo) return;
     setIsSavingBox(true);
     try {
+      const sanitizedLineItems: PoLineItem[] = lineItemsState.map((item) => {
+        const summary = computeLineItemBoxSummary(item);
+        return {
+          itemId: String(item.itemId || '').slice(0, 60),
+          itemName: String(item.itemName || '').slice(0, 200),
+          qty: Number(item.qty) || 0,
+          boxDimensions: summary.dimSummary.slice(0, 100),
+          noOfBoxes: summary.totalBoxes,
+          boxWeight: summary.totalChargeableKg > 0 ? `${summary.totalChargeableKg.toFixed(2)} kg` : '',
+          boxes: summary.boxes.map((b) => ({
+            id: b.id,
+            boxDimensions: b.boxDimensions.trim().slice(0, 60),
+            boxCount: b.boxCount,
+            actualWeightKg: b.actualWeightKg,
+            volumetricWeightKg: b.volumetricWeightKg,
+            chargeableWeightKg: b.chargeableWeightKg,
+          })),
+          packedStatus: item.packedStatus || 'PENDING',
+        };
+      });
+
+      const autoDimFallback = sanitizedLineItems
+        .map((it) => it.boxDimensions || '')
+        .filter(Boolean)
+        .join(' | ');
+      const finalMasterDim = (masterBoxDim.trim() || autoDimFallback || 'Standard Box').slice(
+        0,
+        100
+      );
+
       await onUpdateBoxDimensions({
         poId: editingBoxPo.id,
         poNumber: editingBoxPo.poNumber,
-        noOfBoxes: masterBoxCount,
-        boxDimensions: masterBoxDim.trim(),
-        lineItems: lineItemsState,
+        noOfBoxes: Math.max(1, Number(masterBoxCount) || modalWeightTotals.totalBoxes || 1),
+        boxDimensions: finalMasterDim,
+        lineItems: sanitizedLineItems,
         markReady,
       });
       setEditingBoxPo(null);
@@ -571,43 +839,88 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                         </div>
                       </td>
 
-                      {/* Separate Products Breakdown with Individual Box Dimensions */}
-                      <td className="py-3 px-4 min-w-[300px]">
+                      {/* Separate Products Breakdown with Multi-Box & Weight Summary */}
+                      <td className="py-3 px-4 min-w-[320px]">
                         <div className="space-y-1.5">
-                          {lineItems.map((item, idx) => (
-                            <div
-                              key={idx}
-                              className={`p-2 rounded-lg border text-[11px] ${
-                                darkMode
-                                  ? 'bg-slate-950/60 border-slate-800/80'
-                                  : 'bg-slate-50/80 border-slate-200/80'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="font-mono font-bold text-orange-600 dark:text-orange-400">
-                                  {item.itemId}
-                                </span>
-                                <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
-                                  Qty: {item.qty}
-                                </span>
+                          {lineItems.map((item, idx) => {
+                            const itemSummary = computeLineItemBoxSummary(item);
+                            const hasMultipleBoxes =
+                              Array.isArray(item.boxes) && item.boxes.length > 0;
+                            return (
+                              <div
+                                key={idx}
+                                className={`p-2 rounded-lg border text-[11px] ${
+                                  darkMode
+                                    ? 'bg-slate-950/60 border-slate-800/80'
+                                    : 'bg-slate-50/80 border-slate-200/80'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-mono font-bold text-orange-600 dark:text-orange-400">
+                                    {item.itemId}
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                                      Qty: {item.qty}
+                                    </span>
+                                    {itemSummary.totalChargeableKg > 0 && (
+                                      <span className="font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px]">
+                                        {itemSummary.totalChargeableKg.toFixed(2)} kg
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="text-slate-600 dark:text-slate-300 font-medium truncate max-w-[280px]">
+                                  {item.itemName}
+                                </div>
+                                {hasMultipleBoxes ? (
+                                  <div className="mt-1.5 space-y-1">
+                                    {itemSummary.boxes.map((box, bIdx) => (
+                                      <div
+                                        key={box.id || bIdx}
+                                        className="flex items-center justify-between gap-2 text-[10px] font-mono bg-amber-500/10 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded"
+                                      >
+                                        <span>
+                                          Box {bIdx + 1}
+                                          {box.boxCount > 1 ? ` (×${box.boxCount})` : ''}:{' '}
+                                          {box.boxDimensions || 'Dim not set'}
+                                        </span>
+                                        {box.chargeableWeightKg > 0 && (
+                                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                                            {box.chargeableWeightKg.toFixed(2)} kg
+                                          </span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between gap-2 mt-1 text-[10px]">
+                                    <span className="text-slate-500">Box Dim:</span>
+                                    <span className="font-mono font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                                      {item.boxDimensions || po.boxDimensions || 'Not specified'}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
-                              <div className="text-slate-600 dark:text-slate-300 font-medium truncate max-w-[280px]">
-                                {item.itemName}
-                              </div>
-                              <div className="flex items-center justify-between gap-2 mt-1 text-[10px]">
-                                <span className="text-slate-500">Box Dim:</span>
-                                <span className="font-mono font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
-                                  {item.boxDimensions || po.boxDimensions || 'Not specified'}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </td>
 
-                      {/* Total Boxes */}
+                      {/* Total Boxes & Total Weight */}
                       <td className="py-3 px-4 text-center whitespace-nowrap font-mono font-bold text-amber-600 dark:text-amber-400">
-                        {po.noOfBoxes || 1} Box(es)
+                        <div>{po.noOfBoxes || 1} Box(es)</div>
+                        {(() => {
+                          const poTotalWt = lineItems.reduce(
+                            (sum, li) => sum + computeLineItemBoxSummary(li).totalChargeableKg,
+                            0
+                          );
+                          return poTotalWt > 0 ? (
+                            <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                              {poTotalWt.toFixed(2)} kg
+                            </div>
+                          ) : null;
+                        })()}
                       </td>
 
                       {/* Master Box Dimensions */}
@@ -771,14 +1084,14 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
       )}
       </div>
 
-      {/* MODAL 1: Update Individual Product Box Dimensions */}
+      {/* MODAL 1: Multi-Box Packaging & Automatic Weight Calculator */}
       {editingBoxPo && (
         <div
           className="fixed inset-0 z-[90] flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-xs overflow-y-auto"
           onClick={() => setEditingBoxPo(null)}
         >
           <div
-            className={`w-full max-w-2xl rounded-2xl shadow-2xl border overflow-hidden my-auto ${
+            className={`w-full max-w-3xl rounded-2xl shadow-2xl border overflow-hidden my-auto ${
               darkMode
                 ? 'bg-slate-900 border-slate-800 text-slate-100'
                 : 'bg-white border-slate-200 text-slate-900'
@@ -790,10 +1103,10 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                 <Boxes className="w-5 h-5 text-orange-500" />
                 <div>
                   <h3 className="font-bold text-sm">
-                    Update Box Dimensions for PO: {editingBoxPo.poNumber}
+                    Update Box Dimensions &amp; Auto Weight — PO: {editingBoxPo.poNumber}
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Set dimensions (L x W x H in cm) for each individual product and overall package
+                    Add multiple boxes per product (+ Add Box). Volumetric &amp; total shipment weight calculate automatically.
                   </p>
                 </div>
               </div>
@@ -807,19 +1120,25 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
             </div>
 
             <form onSubmit={handleSaveBoxDimensions} className="p-4 sm:p-5 space-y-4 text-xs">
-              {/* Master / Overall Package Settings */}
+              {/* Master / Overall Package Settings + Live Weight Summary */}
               <div
-                className={`p-3.5 rounded-xl border ${
+                className={`p-3.5 rounded-xl border space-y-3 ${
                   darkMode ? 'bg-slate-950/60 border-slate-800' : 'bg-slate-50 border-slate-200'
                 }`}
               >
-                <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2.5">
-                  Overall Master Shipment Dimensions
-                </h4>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    Overall Master Shipment Summary
+                  </h4>
+                  <span className="text-[11px] font-mono text-slate-500">
+                    Volumetric Formula: (L × W × H cm) ÷ 5000
+                  </span>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-slate-500 font-semibold mb-1">
-                      Total Boxes for Shipment *
+                      Total Boxes for Shipment (Auto-summed) *
                     </label>
                     <input
                       type="number"
@@ -837,14 +1156,17 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
 
                   <div>
                     <label className="block text-slate-500 font-semibold mb-1">
-                      Master Box Dimensions (L x W x H cm) *
+                      Master Box Dimensions Summary (Max 100 chars)
                     </label>
                     <input
                       type="text"
+                      maxLength={100}
                       value={masterBoxDim}
-                      onChange={(e) => setMasterBoxDim(e.target.value)}
-                      placeholder="e.g. 50x40x30 cm or 2 Boxes: 40x30x20 cm"
-                      required
+                      onChange={(e) => {
+                        setIsMasterDimManual(true);
+                        setMasterBoxDim(e.target.value);
+                      }}
+                      placeholder="Auto-filled from product boxes (e.g. 40x30x20 cm)"
                       className={`w-full px-3 py-1.5 rounded-lg border font-mono outline-none ${
                         darkMode
                           ? 'bg-slate-900 border-slate-700 text-slate-100'
@@ -853,83 +1175,214 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                     />
                   </div>
                 </div>
+
+                {/* Auto-Calculated Shipment Weight Summary Bar */}
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  <div
+                    className={`p-2 rounded-lg border ${
+                      darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+                    }`}
+                  >
+                    <div className="text-[10px] text-slate-500 font-semibold">Actual Weight</div>
+                    <div className="text-sm font-bold font-mono text-slate-700 dark:text-slate-200">
+                      {modalWeightTotals.totalActualKg.toFixed(2)} kg
+                    </div>
+                  </div>
+                  <div
+                    className={`p-2 rounded-lg border ${
+                      darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+                    }`}
+                  >
+                    <div className="text-[10px] text-slate-500 font-semibold">Volumetric Weight</div>
+                    <div className="text-sm font-bold font-mono text-blue-600 dark:text-blue-400">
+                      {modalWeightTotals.totalVolumetricKg.toFixed(2)} kg
+                    </div>
+                  </div>
+                  <div className="p-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10">
+                    <div className="text-[10px] text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1">
+                      <Scale className="w-3 h-3" />
+                      <span>Total Chargeable Wt</span>
+                    </div>
+                    <div className="text-sm font-extrabold font-mono text-emerald-600 dark:text-emerald-400">
+                      {modalWeightTotals.totalChargeableKg.toFixed(2)} kg
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Individual Product Line Items */}
+              {/* Individual Product Line Items with Multiple Boxes */}
               <div className="space-y-2.5">
                 <h4 className="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                  Individual Product Packaging &amp; Box Dimensions
+                  Product Packaging &amp; Multi-Box Weight Calculator
                 </h4>
 
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {lineItemsState.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                        darkMode
-                          ? 'bg-slate-950/40 border-slate-800'
-                          : 'bg-slate-50/60 border-slate-200'
-                      }`}
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-orange-600 dark:text-orange-400">
-                            {item.itemId}
-                          </span>
-                          <span className="font-semibold text-slate-800 dark:text-slate-200">
-                            {item.itemName}
-                          </span>
+                <div className="space-y-3 max-h-[42vh] overflow-y-auto pr-1">
+                  {lineItemsState.map((item, idx) => {
+                    const summary = computeLineItemBoxSummary(item);
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-3.5 rounded-xl border space-y-3 ${
+                          darkMode
+                            ? 'bg-slate-950/40 border-slate-800'
+                            : 'bg-slate-50/70 border-slate-200'
+                        }`}
+                      >
+                        {/* Product Header + Add Box Button */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200/80 dark:border-slate-800">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono font-bold text-orange-600 dark:text-orange-400">
+                                {item.itemId}
+                              </span>
+                              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                {item.itemName}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-2">
+                              <span>
+                                Order Qty: <strong className="font-mono">{item.qty} units</strong>
+                              </span>
+                              <span>·</span>
+                              <span className="font-mono font-semibold text-amber-600 dark:text-amber-400">
+                                {summary.totalBoxes} Box(es)
+                              </span>
+                              <span>·</span>
+                              <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                Product Wt: {summary.totalChargeableKg.toFixed(2)} kg
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleAddBoxToProduct(idx)}
+                            className="px-2.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Add Box</span>
+                          </button>
                         </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5">
-                          Order Quantity: <strong className="font-mono">{item.qty} units</strong>
+
+                        {/* Multiple Boxes List for this Product */}
+                        <div className="space-y-2">
+                          {summary.boxes.map((box, bIdx) => (
+                            <div
+                              key={box.id || bIdx}
+                              className={`p-2.5 rounded-lg border grid grid-cols-1 sm:grid-cols-12 gap-2 items-end ${
+                                darkMode
+                                  ? 'bg-slate-900/90 border-slate-800'
+                                  : 'bg-white border-slate-200'
+                              }`}
+                            >
+                              <div className="sm:col-span-1 flex items-center justify-between sm:justify-center h-full pb-1">
+                                <span className="px-2 py-0.5 rounded bg-orange-500/15 text-orange-600 dark:text-orange-400 font-mono font-bold text-[11px]">
+                                  #{bIdx + 1}
+                                </span>
+                                {summary.boxes.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveBoxFromProduct(idx, bIdx)}
+                                    className="sm:hidden p-1 text-red-500 hover:bg-red-500/10 rounded cursor-pointer"
+                                    title="Remove Box"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="sm:col-span-4">
+                                <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">
+                                  Dimensions (L × W × H cm)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={box.boxDimensions}
+                                  onChange={(e) =>
+                                    handleUpdateProductBox(idx, bIdx, {
+                                      boxDimensions: e.target.value,
+                                    })
+                                  }
+                                  placeholder="e.g. 40x30x20"
+                                  className={`w-full px-2.5 py-1 rounded-lg border font-mono text-xs outline-none ${
+                                    darkMode
+                                      ? 'bg-slate-950 border-slate-700 text-slate-100'
+                                      : 'bg-white border-slate-300 text-slate-900'
+                                  }`}
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">
+                                  Box Qty
+                                </label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={box.boxCount}
+                                  onChange={(e) =>
+                                    handleUpdateProductBox(idx, bIdx, {
+                                      boxCount: Math.max(1, parseInt(e.target.value) || 1),
+                                    })
+                                  }
+                                  className={`w-full px-2 py-1 rounded-lg border font-mono text-xs text-center outline-none ${
+                                    darkMode
+                                      ? 'bg-slate-950 border-slate-700 text-slate-100'
+                                      : 'bg-white border-slate-300 text-slate-900'
+                                  }`}
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <label className="block text-[10px] text-slate-500 font-semibold mb-0.5">
+                                  Actual Wt (kg/box)
+                                </label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  value={box.actualWeightKg === 0 ? '' : box.actualWeightKg}
+                                  onChange={(e) =>
+                                    handleUpdateProductBox(idx, bIdx, {
+                                      actualWeightKg: Math.max(0, parseFloat(e.target.value) || 0),
+                                    })
+                                  }
+                                  placeholder="0.00"
+                                  className={`w-full px-2 py-1 rounded-lg border font-mono text-xs outline-none ${
+                                    darkMode
+                                      ? 'bg-slate-950 border-slate-700 text-slate-100'
+                                      : 'bg-white border-slate-300 text-slate-900'
+                                  }`}
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2 flex flex-col justify-center text-right font-mono pb-0.5">
+                                <span className="text-[10px] text-blue-600 dark:text-blue-400">
+                                  Vol: {box.volumetricWeightKg.toFixed(2)} kg
+                                </span>
+                                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                                  Tot: {box.chargeableWeightKg.toFixed(2)} kg
+                                </span>
+                              </div>
+
+                              <div className="hidden sm:flex sm:col-span-1 justify-end pb-1">
+                                {summary.boxes.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveBoxFromProduct(idx, bIdx)}
+                                    className="p-1.5 text-red-500 hover:bg-red-500/10 rounded-lg cursor-pointer transition-colors"
+                                    title="Remove Box"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div>
-                          <label className="block text-[10px] text-slate-500 mb-0.5">
-                            Product Box Dim (L x W x H)
-                          </label>
-                          <input
-                            type="text"
-                            value={item.boxDimensions || ''}
-                            onChange={(e) => {
-                              const updated = [...lineItemsState];
-                              updated[idx].boxDimensions = e.target.value;
-                              setLineItemsState(updated);
-                            }}
-                            placeholder="e.g. 40x30x20 cm"
-                            className={`w-36 px-2.5 py-1 rounded-lg border font-mono text-xs outline-none ${
-                              darkMode
-                                ? 'bg-slate-900 border-slate-700 text-slate-100'
-                                : 'bg-white border-slate-300 text-slate-900'
-                            }`}
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[10px] text-slate-500 mb-0.5">
-                            Boxes
-                          </label>
-                          <input
-                            type="number"
-                            min={1}
-                            value={item.noOfBoxes || 1}
-                            onChange={(e) => {
-                              const updated = [...lineItemsState];
-                              updated[idx].noOfBoxes = Math.max(1, parseInt(e.target.value) || 1);
-                              setLineItemsState(updated);
-                            }}
-                            className={`w-16 px-2.5 py-1 rounded-lg border font-mono text-xs text-center outline-none ${
-                              darkMode
-                                ? 'bg-slate-900 border-slate-700 text-slate-100'
-                                : 'bg-white border-slate-300 text-slate-900'
-                            }`}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -949,7 +1402,7 @@ export const WarehouseTab: React.FC<WarehouseTabProps> = ({
                   className="px-3.5 py-2 rounded-lg border border-orange-500/40 text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>{isSavingBox ? 'Saving...' : 'Save Dimensions'}</span>
+                  <span>{isSavingBox ? 'Saving...' : 'Save Boxes & Weights'}</span>
                 </button>
                 <button
                   type="button"
