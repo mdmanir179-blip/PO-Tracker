@@ -1060,6 +1060,7 @@ export default function App() {
   // Print Team: Verify PO Document YES / NO (Moving to Warehouse on YES)
   const handleTogglePrintVerify = async (po: PurchaseOrder, verified: 'YES' | 'NO') => {
     if (!firebaseUser || !employeeProfile) return;
+    if (verified === 'NO' && (isOrderGrn(po) || isOrderRto(po))) return;
     const poRef = doc(db, 'purchase_orders', po.id);
     const isYes = verified === 'YES';
     try {
@@ -1076,15 +1077,23 @@ export default function App() {
       };
 
       if (isYes) {
-        updateData.workflowStage = 'WAREHOUSE';
-        updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
-        updateData.status = 'Print Verified - Sent to WH';
+        if (
+          !po.workflowStage ||
+          po.workflowStage === 'PO_ENTRY' ||
+          po.workflowStage === 'PRINT_LOGISTICS'
+        ) {
+          updateData.workflowStage = 'WAREHOUSE';
+          updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
+          updateData.status = 'Print Verified - Sent to WH';
+        }
         updateData.dcVerified = true;
         updateData.invoiceVerified = true;
         updateData.poCopyVerified = true;
       } else {
-        updateData.workflowStage = 'PRINT_LOGISTICS';
-        updateData.status = 'Sent to Print Team';
+        if (po.workflowStage === 'WAREHOUSE' || po.workflowStage === 'PRINT_LOGISTICS') {
+          updateData.workflowStage = 'PRINT_LOGISTICS';
+          updateData.status = 'Sent to Print Team';
+        }
         updateData.dcVerified = false;
         updateData.invoiceVerified = false;
         updateData.poCopyVerified = false;
@@ -1112,6 +1121,7 @@ export default function App() {
     nextVal?: boolean
   ) => {
     if (!firebaseUser || !employeeProfile) return;
+    if (isOrderGrn(po) || isOrderRto(po)) return;
     const poRef = doc(db, 'purchase_orders', po.id);
     const key =
       docType === 'dc'
@@ -1141,9 +1151,15 @@ export default function App() {
       };
 
       if (allVerified) {
-        updateData.workflowStage = 'WAREHOUSE';
-        updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
-        updateData.status = 'Print Verified - Sent to WH';
+        if (
+          !po.workflowStage ||
+          po.workflowStage === 'PO_ENTRY' ||
+          po.workflowStage === 'PRINT_LOGISTICS'
+        ) {
+          updateData.workflowStage = 'WAREHOUSE';
+          updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
+          updateData.status = 'Print Verified - Sent to WH';
+        }
       } else if (po.printVerified === 'YES' && po.workflowStage === 'WAREHOUSE') {
         updateData.workflowStage = 'PRINT_LOGISTICS';
         updateData.status = 'Sent to Print Team';
@@ -1169,6 +1185,7 @@ export default function App() {
   // Print Team: Verify or Unverify ALL 3 Documents at once (Delivery Challan, Tax Invoice, PO Copy)
   const handleToggleAllDocs = async (po: PurchaseOrder, markAll: boolean) => {
     if (!firebaseUser || !employeeProfile) return;
+    if (isOrderGrn(po) || isOrderRto(po)) return;
     const poRef = doc(db, 'purchase_orders', po.id);
     try {
       const updateData: any = {
@@ -1186,10 +1203,16 @@ export default function App() {
       };
 
       if (markAll) {
-        updateData.workflowStage = 'WAREHOUSE';
-        updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
-        updateData.status = 'Print Verified - Sent to WH';
-      } else {
+        if (
+          !po.workflowStage ||
+          po.workflowStage === 'PO_ENTRY' ||
+          po.workflowStage === 'PRINT_LOGISTICS'
+        ) {
+          updateData.workflowStage = 'WAREHOUSE';
+          updateData.warehouseStatus = po.warehouseStatus || 'PENDING';
+          updateData.status = 'Print Verified - Sent to WH';
+        }
+      } else if (po.workflowStage === 'WAREHOUSE' || po.workflowStage === 'PRINT_LOGISTICS') {
         updateData.workflowStage = 'PRINT_LOGISTICS';
         updateData.status = 'Sent to Print Team';
       }
@@ -2714,18 +2737,22 @@ export default function App() {
     return list;
   }, [allFilteredPos, logisticsFilterMode]);
 
-  // Print Verification Team List: Verified data is removed from Print Team queue by default (or can be viewed in Verified Archive)
+  const isPrintOrderVerified = (po: PurchaseOrder) =>
+    po.printVerified === 'YES' ||
+    (Boolean(po.dcVerified) && Boolean(po.invoiceVerified) && Boolean(po.poCopyVerified));
+
+  // Print Verification Team List: Verified Archive shows ALL print-verified POs (including orders that moved to Warehouse, In-Transit, GRN, or RTO)
   const printTeamList = useMemo(() => {
     return allFilteredPos
       .filter((po) => {
-        if (isOrderGrn(po) || isOrderRto(po)) return false;
-        const isVerified = po.printVerified === 'YES';
-        if (printTeamFilter === 'PENDING') {
-          // Data that print team has verified is removed from print team queue!
-          return !isVerified && (po.workflowStage === 'PRINT_LOGISTICS' || po.printVerified === 'NO' || !po.printVerified);
-        }
+        const isVerified = isPrintOrderVerified(po);
         if (printTeamFilter === 'VERIFIED') {
           return isVerified;
+        }
+        if (isOrderGrn(po) || isOrderRto(po)) return false;
+        if (printTeamFilter === 'PENDING') {
+          // Data that print team has verified is removed from pending print team queue
+          return !isVerified && (po.workflowStage === 'PRINT_LOGISTICS' || po.printVerified === 'NO' || !po.printVerified);
         }
         return po.workflowStage === 'PRINT_LOGISTICS' || !isVerified;
       })
@@ -2988,14 +3015,14 @@ export default function App() {
 
   const activePrintTeamCount = useMemo(() => {
     return purchaseOrders.filter((po) => {
-      if (po.printVerified === 'YES') return false;
+      if (isPrintOrderVerified(po)) return false;
       if (isOrderGrn(po) || isOrderRto(po)) return false;
       return po.workflowStage === 'PRINT_LOGISTICS' || po.printVerified === 'NO' || !po.printVerified;
     }).length;
   }, [purchaseOrders]);
 
   const verifiedPrintTeamCount = useMemo(() => {
-    return purchaseOrders.filter((po) => po.printVerified === 'YES').length;
+    return purchaseOrders.filter((po) => isPrintOrderVerified(po)).length;
   }, [purchaseOrders]);
 
   const activeWarehouseCount = useMemo(() => {
@@ -5069,10 +5096,11 @@ export default function App() {
                       {printTeamList
                         .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
                         .map((po) => {
-                          const isDcOk = Boolean(po.dcVerified);
-                          const isInvOk = Boolean(po.invoiceVerified);
-                          const isPoCopyOk = Boolean(po.poCopyVerified);
-                          const isAllVerified = po.printVerified === 'YES';
+                          const isAllVerified = isPrintOrderVerified(po);
+                          const isDcOk = Boolean(po.dcVerified) || po.printVerified === 'YES';
+                          const isInvOk = Boolean(po.invoiceVerified) || po.printVerified === 'YES';
+                          const isPoCopyOk = Boolean(po.poCopyVerified) || po.printVerified === 'YES';
+                          const isLockedArchive = isAllVerified && (isOrderGrn(po) || isOrderRto(po));
 
                           return (
                             <tr
@@ -5116,29 +5144,34 @@ export default function App() {
                                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                                       {isAllVerified ? '3 of 3 Verified' : `${(isDcOk ? 1 : 0) + (isInvOk ? 1 : 0) + (isPoCopyOk ? 1 : 0)} of 3 Checked`}
                                     </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleAllDocs(po, !isAllVerified)}
-                                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
-                                        isAllVerified
-                                          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25'
-                                          : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-xs'
-                                      }`}
-                                      title={isAllVerified ? 'Click to reset all 3 documents to unverified' : 'Click to mark all 3 documents verified at once'}
-                                    >
-                                      {isAllVerified ? 'Reset All' : '✓ Mark All (3/3)'}
-                                    </button>
+                                    {!isLockedArchive && canUserVerifyPrint && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleAllDocs(po, !isAllVerified)}
+                                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer transition-colors ${
+                                          isAllVerified
+                                            ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25'
+                                            : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-xs'
+                                        }`}
+                                        title={isAllVerified ? 'Click to reset all 3 documents to unverified' : 'Click to mark all 3 documents verified at once'}
+                                      >
+                                        {isAllVerified ? 'Reset All' : '✓ Mark All (3/3)'}
+                                      </button>
+                                    )}
                                   </div>
 
                                   <button
                                     type="button"
+                                    disabled={isLockedArchive || !canUserVerifyPrint}
                                     onClick={() => handleToggleDocVerify(po, 'dc')}
-                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors text-left ${
+                                      isLockedArchive || !canUserVerifyPrint ? 'cursor-default opacity-85' : 'cursor-pointer'
+                                    } ${
                                       isDcOk
                                         ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
                                         : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
                                     }`}
-                                    title="Click to toggle Delivery Challan verification"
+                                    title={isLockedArchive ? 'Archived completed order' : 'Click to toggle Delivery Challan verification'}
                                   >
                                     {isDcOk ? (
                                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -5150,13 +5183,16 @@ export default function App() {
 
                                   <button
                                     type="button"
+                                    disabled={isLockedArchive || !canUserVerifyPrint}
                                     onClick={() => handleToggleDocVerify(po, 'invoice')}
-                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors text-left ${
+                                      isLockedArchive || !canUserVerifyPrint ? 'cursor-default opacity-85' : 'cursor-pointer'
+                                    } ${
                                       isInvOk
                                         ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
                                         : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
                                     }`}
-                                    title="Click to toggle Tax Invoice verification"
+                                    title={isLockedArchive ? 'Archived completed order' : 'Click to toggle Tax Invoice verification'}
                                   >
                                     {isInvOk ? (
                                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -5168,13 +5204,16 @@ export default function App() {
 
                                   <button
                                     type="button"
+                                    disabled={isLockedArchive || !canUserVerifyPrint}
                                     onClick={() => handleToggleDocVerify(po, 'poCopy')}
-                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer text-left ${
+                                    className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors text-left ${
+                                      isLockedArchive || !canUserVerifyPrint ? 'cursor-default opacity-85' : 'cursor-pointer'
+                                    } ${
                                       isPoCopyOk
                                         ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
                                         : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-700'
                                     }`}
-                                    title="Click to toggle PO Copy verification"
+                                    title={isLockedArchive ? 'Archived completed order' : 'Click to toggle PO Copy verification'}
                                   >
                                     {isPoCopyOk ? (
                                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -5242,25 +5281,30 @@ export default function App() {
                               {/* Actions */}
                               <td className="py-3 px-4 text-right whitespace-nowrap">
                                 <div className="inline-flex items-center gap-1.5">
-                                  {canUserVerifyPrint && (
+                                  {canUserVerifyPrint && !(isAllVerified && (isOrderGrn(po) || isOrderRto(po))) && (
                                     <button
                                       type="button"
                                       onClick={() =>
                                         handleTogglePrintVerify(
                                           po,
-                                          po.printVerified === 'YES' ? 'NO' : 'YES'
+                                          isAllVerified ? 'NO' : 'YES'
                                         )
                                       }
                                       className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer shadow-xs active:scale-95 ${
-                                        po.printVerified === 'YES'
+                                        isAllVerified
                                           ? 'border border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
                                           : 'bg-emerald-600 hover:bg-emerald-500 text-white'
                                       }`}
                                     >
-                                      {po.printVerified === 'YES'
+                                      {isAllVerified
                                         ? 'Mark Unverified'
                                         : '✓ Verify & Move to Warehouse'}
                                     </button>
+                                  )}
+                                  {isAllVerified && (isOrderGrn(po) || isOrderRto(po)) && (
+                                    <span className="px-2 py-1 rounded-lg bg-slate-500/10 text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
+                                      {isOrderRto(po) ? 'Archived (RTO)' : 'Archived (GRN)'}
+                                    </span>
                                   )}
 
                                   {isAdmin && (
