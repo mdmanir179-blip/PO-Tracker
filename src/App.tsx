@@ -3753,7 +3753,7 @@ export default function App() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by PO Number, Warehouse, Item SKU, DN No, LR No, POC Name, or Employee..."
+              placeholder="Search Here"
               className={`w-full pl-9 pr-4 py-2 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-orange-500 ${
                 darkMode
                   ? 'bg-slate-900 border-slate-800 text-slate-100 placeholder-slate-500'
