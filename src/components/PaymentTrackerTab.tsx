@@ -307,59 +307,6 @@ export const PaymentTrackerTab: React.FC<PaymentTrackerTabProps> = ({
 
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
-      {/* 1. Header & Quick Export Controls */}
-      <div
-        className={`p-4 sm:p-5 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-          darkMode ? 'bg-slate-900 border-slate-800' : isGrey ? 'bg-zinc-100 border-zinc-300' : 'bg-white border-slate-200'
-        }`}
-      >
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-orange-500/15 text-orange-600 dark:text-orange-400">
-            <CreditCard className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base sm:text-lg font-bold tracking-tight">
-                PO Payments & Financial Tracker
-              </h2>
-              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-orange-500/15 text-orange-600 dark:text-orange-400">
-                {purchaseOrders.length} POs Tracked
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Automated 1-month payment term tracking from GRN Date · Partition/Partial payments · Instant Overdue Alerts & Financial Ledger
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleExportExcel}
-            className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
-              darkMode
-                ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-            <span>Export Excel</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleExportPdf}
-            className={`px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
-              darkMode
-                ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <FileText className="w-4 h-4 text-red-500" />
-            <span>Export PDF</span>
-          </button>
-        </div>
-      </div>
-
       {/* 2. Critical Overdue Notice Banner (if any POs > 30 days overdue) */}
       {metrics.overdueCount > 0 && (
         <div className="p-4 rounded-xl border border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">

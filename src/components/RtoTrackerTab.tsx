@@ -141,7 +141,7 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* 1. Header & Summary Banner */}
+      {/* 1. Summary Metrics */}
       <div
         className={`p-4 sm:p-5 rounded-xl border ${
           darkMode
@@ -151,43 +151,8 @@ export const RtoTrackerTab: React.FC<RtoTrackerTabProps> = ({
             : 'bg-white border-slate-200'
         }`}
       >
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-orange-500/15 text-orange-600 dark:text-orange-400">
-                <RotateCcw className="w-5 h-5" />
-              </div>
-              <h2 className="text-base sm:text-lg font-bold flex items-center gap-2">
-                <span>RTO (Return to Origin) & Reverse Logistics</span>
-                <span className="text-xs px-2.5 py-0.5 rounded-full bg-orange-500/15 text-orange-700 dark:text-orange-300 font-mono font-bold">
-                  {metrics.total} Active
-                </span>
-              </h2>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
-              Centralized reverse logistics control for Instamart Darkstore gate rejections, missed appointment windows, packaging damages, return courier AWB tracking, and origin warehouse receipts.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {canManage && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedPoId(nonRtoPos[0]?.id || '');
-                  setIsInitiateModalOpen(true);
-                }}
-                className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ Initiate RTO for PO</span>
-              </button>
-            )}
-          </div>
-        </div>
-
         {/* 2. Metrics 4-Cards Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4 mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-4">
           <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800/80 bg-slate-50 dark:bg-slate-950/50">
             <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 flex items-center justify-between">
               <span>Total RTO Shipments</span>

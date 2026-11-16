@@ -4213,17 +4213,6 @@ export default function App() {
                 : 'bg-white border-slate-200'
             }`}
           >
-            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-sm font-bold">
-                  01. Instamart New PO Entry (Backoffice & Admin)
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  All 21 PO fields · Switching Pickup Status to YES immediately shifts the entire PO to the In Transit tab. POs expiring within 7 days are highlighted.
-                </p>
-              </div>
-            </div>
-
             {poEntryList.length === 0 ? (
               <div className="p-10 sm:p-12 text-center space-y-3">
                 <div className="text-sm font-semibold">No Pending PO Entries</div>
@@ -4937,16 +4926,6 @@ export default function App() {
                   : 'bg-white border-slate-200'
               }`}
             >
-              <div className="px-4 sm:px-6 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                <div>
-                  <h3 className="text-xs sm:text-sm font-bold">
-                    Logistics DN Notes & LR Discrepancy Records ({filteredDnList.length})
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    All DN Notes logged by Logistics, Warehouse, Backoffice, or Admin.
-                  </p>
-                </div>
-              </div>
               {filteredDnList.length === 0 ? (
                 <div className="p-6 text-center text-xs text-slate-500">
                   No DN Notes logged yet. Click "+ DN Note" on any delivery row above to record a DN Note.
@@ -5024,17 +5003,7 @@ export default function App() {
                 : 'bg-white border-slate-200'
             }`}
           >
-            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-bold flex items-center gap-2">
-                  <Printer className="w-4 h-4 text-orange-500" />
-                  <span>Print Verification Team — PO Slip & Invoice Print Verification</span>
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Print Delivery Challan, Tax Invoice &amp; PO Copy. Once verified, orders automatically clear from this queue and move to Warehouse for box packaging &amp; dispatch.
-                </p>
-              </div>
-
+            <div className="px-4 sm:px-6 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-end gap-3">
               {/* View filter: Pending (default) vs Verified History */}
               <div className="flex items-center gap-1.5 p-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-950/60 text-xs">
                 <button
@@ -5336,27 +5305,6 @@ export default function App() {
                 : 'bg-white border-slate-200'
             }`}
           >
-            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-bold flex items-center gap-2">
-                  <span>
-                    02. In Transit Shipments (Full Access for Backoffice Team & Admin)
-                  </span>
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Backoffice Team, Admin, and permitted staff can edit all PO fields, update Logistics/Tracking, shift to GRN, or directly log a DN Note. All products here automatically appear in the DN Tracker tab.
-                </p>
-              </div>
-              <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>
-                  {canUserEditPo || canUserManageLogistics
-                    ? 'Full Backoffice & Admin Access Active (Edit PO, Inward to GRN & Log DN)'
-                    : 'View Mode'}
-                </span>
-              </div>
-            </div>
-
             {inTransitList.length === 0 ? (
               <div className="p-10 sm:p-12 text-center space-y-2">
                 <div className="text-sm font-semibold">No Shipments Currently In Transit</div>
@@ -5710,17 +5658,6 @@ export default function App() {
                 : 'bg-white border-slate-200'
             }`}
           >
-            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-bold">
-                  03. GRN (Goods Receipt Note) & Discrepancy Note (DN) Updates
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Successfully inwarded POs automatically arrive here. Permitted employees can update GRN DN remarks or raise an official DN Tracker entry.
-                </p>
-              </div>
-            </div>
-
             {grnList.length === 0 ? (
               <div className="p-10 sm:p-12 text-center space-y-2">
                 <div className="text-sm font-semibold">No Inwarded GRN Records Yet</div>
@@ -6003,20 +5940,6 @@ export default function App() {
                   : 'bg-white border-slate-200'
               }`}
             >
-              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-red-500/5 via-orange-500/5 to-transparent">
-                <div>
-                  <h2 className="text-sm font-bold flex items-center gap-2 text-rose-600 dark:text-rose-400">
-                    <ShieldAlert className="w-4 h-4 shrink-0 text-red-500" />
-                    <span>
-                      GRN &amp; Inward Discrepancy (DN) Products — Price Decreased &amp; Net Payment ({grnDnList.length})
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    When products are marked with a Discrepancy Note (DN) during GRN Inward, their quantities and prices are automatically decreased here, reflecting the accepted GRN stock and adjusted net payment.
-                  </p>
-                </div>
-              </div>
-
               {grnDnList.length === 0 ? (
                 <div className="p-6 text-center text-xs text-slate-500">
                   No products currently have DN discrepancies in GRN &amp; Inward. When a product is marked with a DN during Inward or GRN update, it will automatically appear here with the decreased price, accepted GRN, and adjusted payment.
@@ -6342,41 +6265,6 @@ export default function App() {
                 : 'bg-white border-slate-200'
             }`}
           >
-            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm sm:text-base font-bold flex items-center gap-2">
-                  <Building2 className="w-4 h-4 text-orange-500" />
-                  <span>
-                    Instamart POC Team Contact Directory — Facility POC Phone Numbers & Email IDs
-                  </span>
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  Centralized directory of all Instamart Warehouse / Hub POC Team members, Contact Numbers, and Email IDs. Automatically syncs with the DN Tracker modal.
-                </p>
-              </div>
-              {(isAdmin || isBackoffice || canUserEditPo || canUserManageLogistics) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingPoc(null);
-                    setPocForm({
-                      facilityName: '',
-                      pocName: '',
-                      designation: 'Warehouse / Facility POC',
-                      contactNumber: '',
-                      emailId: '',
-                      cityOrHub: '',
-                    });
-                    setIsPocModalOpen(true);
-                  }}
-                  className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>+ Add Instamart POC Contact</span>
-                </button>
-              )}
-            </div>
-
             {filteredPocList.length === 0 ? (
               <div className="p-10 sm:p-12 text-center space-y-3">
                 <div className="text-sm font-semibold">
@@ -6540,61 +6428,6 @@ export default function App() {
                   : 'bg-white border-slate-200'
               }`}
             >
-              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-sm sm:text-base font-bold flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-orange-500 shrink-0" />
-                    <span>
-                      Admin Master Controller — All Backoffice & Staff Access & Permissions
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Click any permission badge below to instantly turn ON / OFF data entry access for any Backoffice, Warehouse, Logistics, or Print staff member. Changes apply live to the employee's panel.
-                  </p>
-                </div>
-
-                {isAdmin && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleBulkBackofficeAndStaffControl('ENABLE_ALL_BACKOFFICE')
-                      }
-                      className="px-3 py-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 text-xs font-semibold cursor-pointer"
-                    >
-                      Grant Full Access to All Backoffice
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleBulkBackofficeAndStaffControl('ENABLE_ALL_STAFF')}
-                      className="px-3 py-2 rounded-lg border border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 text-xs font-semibold cursor-pointer"
-                    >
-                      Enable All Staff Permissions
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleBulkBackofficeAndStaffControl('RESTRICT_NON_ADMIN')
-                      }
-                      className="px-3 py-2 rounded-lg border border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 text-xs font-semibold cursor-pointer"
-                    >
-                      Lock All Non-Admin Staff
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingEmployee(null);
-                        setIsEmployeeModalOpen(true);
-                      }}
-                      className="px-3.5 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <UserPlus className="w-4 h-4" />
-                      <span>+ Add New Staff / Backoffice</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>

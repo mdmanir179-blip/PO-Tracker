@@ -496,60 +496,6 @@ export const PerformanceDashboard: React.FC<PerformanceDashboardProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header & Export Bar */}
-      <div
-        className={`p-5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-          darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-        }`}
-      >
-        <div>
-          <h2 className="text-base font-bold">
-            Executive Performance Dashboard & Supply Chain Analytics
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Real-time operational insights across Total POs by Warehouse, Date-wise PO trends over time, and Average Inward Turnaround Time.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleExportDashboardExcel}
-            className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
-              darkMode
-                ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Excel (.xlsx)</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleExportDashboardPdf}
-            className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
-              darkMode
-                ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5 text-red-500" />
-            <span>PDF</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleExportDashboardCsv}
-            className={`px-3 py-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
-              darkMode
-                ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-            }`}
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Download CSV</span>
-          </button>
-        </div>
-      </div>
-
       {/* KPI Strip */}
       <div
         className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 p-4 rounded-xl border ${
