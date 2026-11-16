@@ -2994,6 +2994,24 @@ export default function App() {
     return dnRecords.reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0);
   }, [purchaseOrders, dnRecords]);
 
+  const totalDnCount = useMemo(() => {
+    const unmatchedPosWithDn = purchaseOrders.filter((po) => {
+      const hasPoDn = Boolean(po.hasDn || (po.dnQty && po.dnQty > 0));
+      if (!hasPoDn) return false;
+      const poNumLower = (po.poNumber || '').toLowerCase().trim();
+      const grnNumLower = (po.grnNumber || '').toLowerCase().trim();
+      return !dnRecords.some((d) => {
+        const parentLower = (d.parentPoDetails || '').toLowerCase();
+        const dnNumLower = (d.dnNumber || '').toLowerCase();
+        return (
+          (poNumLower && (parentLower.includes(poNumLower) || dnNumLower.includes(poNumLower))) ||
+          (grnNumLower && dnNumLower.includes(grnNumLower))
+        );
+      });
+    });
+    return dnRecords.length + unmatchedPosWithDn.length;
+  }, [purchaseOrders, dnRecords]);
+
   // Total accepted quantity for orders that have a DN
   const totalDnAcceptedQty = useMemo(() => {
     return purchaseOrders
@@ -3684,23 +3702,16 @@ export default function App() {
               <div className="text-xs font-semibold text-rose-600 dark:text-rose-400 flex items-center justify-between">
                 <span>Instamart DN Tracker</span>
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400">
-                  {dnRecords.length} DNs
+                  {totalDnCount} DNs
                 </span>
               </div>
-              <div className="mt-1 flex flex-wrap items-baseline gap-2">
-                <div className="flex items-baseline gap-1">
-                  <span className="text-xl sm:text-2xl font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {totalDnAcceptedQty}
-                  </span>
-                  <span className="text-xs font-bold text-emerald-700 dark:text-emerald-300">pcs Accepted</span>
-                </div>
-                <span className="text-xs text-slate-400 font-normal">/</span>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-base sm:text-lg font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
-                    {totalDnQty}
-                  </span>
-                  <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">DN Qty</span>
-                </div>
+              <div className="mt-1 flex flex-wrap items-baseline gap-1.5">
+                <span className="text-xl sm:text-2xl font-black font-mono tabular-nums text-rose-600 dark:text-rose-400">
+                  {totalDnCount}
+                </span>
+                <span className="text-xs font-bold text-rose-600 dark:text-rose-400">
+                  Total DNs
+                </span>
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
                 <span>Total Accepted: {totalDnAcceptedQty} pcs</span>
@@ -6130,167 +6141,6 @@ export default function App() {
                   onPageChange={setCurrentPage}
                   darkMode={darkMode}
                   itemLabel="discrepancy items"
-                />
-              </>
-            )}
-            </div>
-
-            {/* 2. Logged Discrepancy Notes (DN) Master Registry */}
-            <div
-              className={`rounded-xl border overflow-hidden ${
-                darkMode
-                  ? 'bg-slate-900 border-slate-800'
-                  : isGrey
-                  ? 'bg-zinc-100 border-zinc-300'
-                  : 'bg-white border-slate-200'
-              }`}
-            >
-              <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-bold flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-orange-500" />
-                    <span>
-                      Logged Discrepancy Notes ({dnRecords.length} DNs · Total Discrepancy Qty: {totalDnQty} Units)
-                    </span>
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Official Discrepancy Notes (DN) logged across all Instamart warehouses and facilities with SKU breakdown and quantities.
-                  </p>
-                </div>
-                {canUserManageDn && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingDn(null);
-                      setPrefillDnFromPo(null);
-                      setIsDnModalOpen(true);
-                    }}
-                    className="px-3.5 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>+ Log New DN Note</span>
-                  </button>
-                )}
-              </div>
-
-              {filteredDnList.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-500">
-                  No DN records found matching current search.
-                </div>
-              ) : (
-                <>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr
-                          className={`border-b font-semibold ${
-                            darkMode
-                              ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                              : 'bg-slate-50 border-slate-200 text-slate-600'
-                          }`}
-                        >
-                          <th className="py-2.5 px-4 whitespace-nowrap">DN Date</th>
-                          <th className="py-2.5 px-4 whitespace-nowrap">DN Number</th>
-                          <th className="py-2.5 px-4 whitespace-nowrap">Facility / Warehouse</th>
-                          <th className="py-2.5 px-4 whitespace-nowrap">Parent PO &amp; Date</th>
-                          <th className="py-2.5 px-4 whitespace-nowrap">SKU ID &amp; Item Name</th>
-                          <th className="py-2.5 px-4 text-right whitespace-nowrap">DN Quantity</th>
-                          <th className="py-2.5 px-4 whitespace-nowrap">Discrepancy Reason</th>
-                          <th className="py-2.5 px-4 whitespace-nowrap">Carrier &amp; LR</th>
-                          <th className="py-2.5 px-4 text-right whitespace-nowrap">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                        {filteredDnList
-                          .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-                          .map((dn) => {
-                        const matchingPo = purchaseOrders.find(
-                          (p) =>
-                            p.poNumber.toLowerCase() === dn.parentPoDetails.toLowerCase() ||
-                            dn.parentPoDetails.toLowerCase().includes(p.poNumber.toLowerCase())
-                        );
-
-                        return (
-                          <tr
-                            key={dn.id}
-                            className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
-                          >
-                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">{dn.dnDate}</td>
-                            <td className="py-2.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
-                              {dn.dnNumber}
-                            </td>
-                            <td className="py-2.5 px-4 whitespace-nowrap font-medium">
-                              {dn.facilityName}
-                            </td>
-                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
-                              {matchingPo ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedPoForDetails(matchingPo)}
-                                  className="text-orange-600 dark:text-orange-400 hover:underline cursor-pointer text-left font-bold"
-                                  title="Click to view full PO details"
-                                >
-                                  {dn.parentPoDetails}
-                                </button>
-                              ) : (
-                                <span>{dn.parentPoDetails}</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-4 max-w-[200px]">
-                              <div className="truncate font-medium">{dn.dnSkuIdItemName}</div>
-                            </td>
-                            <td className="py-2.5 px-4 text-right font-mono font-bold tabular-nums text-rose-600 dark:text-rose-400 whitespace-nowrap">
-                              {dn.dnQty} Units
-                            </td>
-                            <td className="py-2.5 px-4 max-w-[180px]">
-                              <div className="truncate text-slate-500" title={dn.whPocDetails || dn.dnReason}>
-                                {dn.whPocDetails || dn.dnReason || 'Discrepancy reported'}
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-4 whitespace-nowrap font-mono text-[11px] text-slate-500">
-                              <div>{dn.carrierName || 'Transporter'}</div>
-                              <div>LR: {dn.lrNo || dn.carrierTrackingId || '-'}</div>
-                            </td>
-                            <td className="py-2.5 px-4 text-right whitespace-nowrap">
-                              <div className="inline-flex items-center gap-1.5">
-                                {canUserManageDn && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingDn(dn);
-                                      setPrefillDnFromPo(null);
-                                      setIsDnModalOpen(true);
-                                    }}
-                                    className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer"
-                                  >
-                                    Edit
-                                  </button>
-                                )}
-                                {isAdmin && (
-                                  <button
-                                    type="button"
-                                    onClick={() => requestDeleteDn(dn)}
-                                    className="p-1 rounded border border-red-500/30 text-red-500 hover:bg-red-500/10 cursor-pointer"
-                                    title="Delete DN"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                <Pagination
-                  currentPage={currentPage}
-                  totalItems={filteredDnList.length}
-                  pageSize={PAGE_SIZE}
-                  onPageChange={setCurrentPage}
-                  darkMode={darkMode}
-                  itemLabel="DN notes"
                 />
               </>
             )}
