@@ -2,8 +2,8 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
-  --font-mono: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
+  --font-sans: 'Arial Unicode MS', Arial, 'Arimo', sans-serif;
+  --font-mono: 'Arial Unicode MS', Arial, 'Arimo', sans-serif;
 }
 
 @layer base {
@@ -13,7 +13,7 @@
   input,
   select,
   textarea {
-    font-family: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
+    font-family: 'Arial Unicode MS', Arial, 'Arimo', sans-serif;
   }
 
   body {
@@ -23,7 +23,7 @@
 
   .font-mono,
   .tabular-nums {
-    font-family: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
+    font-family: 'Arial Unicode MS', Arial, 'Arimo', sans-serif;
     font-variant-numeric: tabular-nums;
   }
 
@@ -50,7 +50,7 @@
   box-sizing: border-box;
   color: #1f1f1f;
   cursor: pointer;
-  font-family: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
+  font-family: 'Arial Unicode MS', Arial, 'Arimo', sans-serif;
   font-size: 14px;
   height: 44px;
   letter-spacing: 0.25px;
