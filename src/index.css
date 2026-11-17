@@ -1,16 +1,29 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+@theme {
+  --font-sans: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
+  --font-mono: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
+}
+
 @layer base {
+  html,
+  body,
+  button,
+  input,
+  select,
+  textarea {
+    font-family: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
+  }
+
   body {
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   .font-mono,
   .tabular-nums {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
     font-variant-numeric: tabular-nums;
   }
 
@@ -37,7 +50,7 @@
   box-sizing: border-box;
   color: #1f1f1f;
   cursor: pointer;
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Calibri', 'Carlito', 'Segoe UI', Arial, sans-serif;
   font-size: 14px;
   height: 44px;
   letter-spacing: 0.25px;
