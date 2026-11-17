@@ -3113,16 +3113,6 @@ export default function App() {
       effectivePerms.canManageDn ||
       effectivePerms.canManageLogistics);
 
-  const activePermissionBadges = [
-    { key: 'canEditPo', label: 'PO Entry', enabled: canUserEditPo },
-    { key: 'canManageWarehouse', label: 'Warehouse Dims', enabled: canUserManageWarehouse },
-    { key: 'canManageCatalog', label: 'SKU Master', enabled: canManageCatalog },
-    { key: 'canManageLogistics', label: 'Logistics & Delivery', enabled: canUserManageLogistics },
-    { key: 'canVerifyPrint', label: 'Print Verify', enabled: canUserVerifyPrint },
-    { key: 'canManageGrn', label: 'GRN Inward', enabled: canUserManageGrn },
-    { key: 'canManageDn', label: 'DN Notes', enabled: canUserManageDn },
-  ];
-
   const formattedLiveDate = nowTime.toLocaleDateString('en-IN', {
     weekday: 'short',
     day: '2-digit',
@@ -3568,22 +3558,6 @@ export default function App() {
             <span className="text-orange-600 dark:text-orange-400 font-bold uppercase text-[11px]">
               {employeeProfile.role}
             </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="text-[11px] text-slate-500 hidden sm:inline">Permissions:</span>
-            {activePermissionBadges.map((b) => (
-              <span
-                key={b.key}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                  b.enabled
-                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
-                    : 'bg-slate-200/70 dark:bg-slate-800 text-slate-400 line-through'
-                }`}
-              >
-                {b.label}
-              </span>
-            ))}
           </div>
         </div>
 
