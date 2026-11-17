@@ -36,7 +36,7 @@ import {
   ShieldAlert,
   Clock,
   AlertTriangle,
-  Phone,
+  MessageCircle,
   Mail,
   Building2,
   RotateCcw,
@@ -5933,58 +5933,6 @@ export default function App() {
         {/* TAB 4: INSTAMART DN TRACKER (AUTOMATICALLY SHOWS GRN DISCREPANCY PRODUCTS + IN-TRANSIT + LOGGED DN RECORDS) */}
         {activeTab === 'DN_TRACKER' && (
           <div className="space-y-6">
-            {/* Prominent Header Banner with Quantity & Count */}
-            <div
-              className={`p-4 sm:p-5 rounded-xl border flex flex-wrap items-center justify-between gap-4 ${
-                darkMode
-                  ? 'bg-gradient-to-r from-slate-900 via-rose-950/20 to-slate-900 border-rose-900/30'
-                  : 'bg-gradient-to-r from-rose-50 via-orange-50 to-amber-50 border-rose-200'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-3 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                  <FileText className="w-6 h-6" />
-                </div>
-                <div>
-                  <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>Instamart DN Tracker</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold">
-                      {dnRecords.length} DN Notes
-                    </span>
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Official Discrepancy Note Ledger · Tracking Discrepancy Quantities across all Instamart Warehouses
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-4 sm:gap-6">
-                <div className="text-right">
-                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Logged DN Records</div>
-                  <div className="text-xl sm:text-2xl font-bold font-mono text-slate-900 dark:text-white">
-                    {dnRecords.length} <span className="text-xs font-normal text-slate-400">DNs</span>
-                  </div>
-                </div>
-                <div className="h-10 w-px bg-slate-300 dark:bg-slate-700" />
-                <div className="text-right">
-                  <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold uppercase tracking-wider">
-                    Accepted in GRN
-                  </div>
-                  <div className="text-2xl sm:text-3xl font-black font-mono text-emerald-600 dark:text-emerald-400">
-                    {totalDnAcceptedQty} <span className="text-xs font-semibold">pcs</span>
-                  </div>
-                </div>
-                <div className="h-10 w-px bg-slate-300 dark:bg-slate-700" />
-                <div className="text-right">
-                  <div className="text-xs text-rose-600 dark:text-rose-400 font-bold uppercase tracking-wider">
-                    Total Discrepancy Quantity
-                  </div>
-                  <div className="text-2xl sm:text-3xl font-black font-mono text-rose-600 dark:text-rose-400">
-                    {totalDnQty} <span className="text-xs font-semibold">Units</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
             {/* 1. Automatic GRN & Inward Discrepancy Products Feed in DN Tab */}
             <div
               className={`rounded-xl border overflow-hidden ${
@@ -6232,13 +6180,27 @@ export default function App() {
                           {poc.designation || 'Warehouse POC'}
                         </td>
                         <td className="py-3 px-4 font-mono font-semibold whitespace-nowrap">
-                          <a
-                            href={`tel:${poc.contactNumber}`}
-                            className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 hover:underline"
-                          >
-                            <Phone className="w-3.5 h-3.5" />
-                            <span>{poc.contactNumber}</span>
-                          </a>
+                          {(() => {
+                            const digits = (poc.contactNumber || '').replace(/\D/g, '');
+                            const waNumber =
+                              digits.length === 10
+                                ? `91${digits}`
+                                : digits.length === 11 && digits.startsWith('0')
+                                ? `91${digits.slice(1)}`
+                                : digits;
+                            return (
+                              <a
+                                href={waNumber ? `https://wa.me/${waNumber}` : '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Open in WhatsApp"
+                                className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 hover:underline"
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" />
+                                <span>{poc.contactNumber}</span>
+                              </a>
+                            );
+                          })()}
                         </td>
                         <td className="py-3 px-4 font-mono whitespace-nowrap">
                           {poc.emailId ? (
