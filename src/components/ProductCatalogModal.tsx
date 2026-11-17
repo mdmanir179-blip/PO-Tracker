@@ -106,6 +106,7 @@ export const ProductCatalogModal: React.FC<ProductCatalogModalProps> = ({
       await onAddCatalogItem(cleanId, cleanName);
       setNewItemId('');
       setNewItemName('');
+      onClose();
     } catch (err: any) {
       setError(err?.message || 'Failed to save Item ID.');
     } finally {

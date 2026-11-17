@@ -815,8 +815,22 @@ export default function App() {
       .slice(0, 60);
     if (!cleanId) return;
 
-    try {
-      await setDoc(doc(db, 'product_catalog', cleanId), {
+    const runFirestoreWrite = (
+      promise: Promise<unknown>,
+      op: OperationType,
+      path: string
+    ) => {
+      promise.catch((err) => {
+        try {
+          handleFirestoreError(err, op, path);
+        } catch (wrapped) {
+          console.error(`Background write notice (${path}):`, wrapped);
+        }
+      });
+    };
+
+    runFirestoreWrite(
+      setDoc(doc(db, 'product_catalog', cleanId), {
         itemId: itemId.trim().toUpperCase().slice(0, 60),
         itemName: itemName.trim().slice(0, 200),
         orgScope: 'instamart_ops',
@@ -825,18 +839,19 @@ export default function App() {
           100
         ),
         updatedAt: serverTimestamp(),
-      });
-      await recordActivity(
-        'Added / Updated Item ID in Master Catalog',
-        'PO_ENTRY',
-        itemId.trim().toUpperCase(),
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) saved Item ID ${itemId
-          .trim()
-          .toUpperCase()} → "${itemName.trim()}".`
-      );
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `product_catalog/${cleanId}`);
-    }
+      }),
+      OperationType.WRITE,
+      `product_catalog/${cleanId}`
+    );
+
+    void recordActivity(
+      'Added / Updated Item ID in Master Catalog',
+      'PO_ENTRY',
+      itemId.trim().toUpperCase(),
+      `${employeeProfile.employeeName} (${employeeProfile.employeeId}) saved Item ID ${itemId
+        .trim()
+        .toUpperCase()} → "${itemName.trim()}".`
+    );
   };
 
   // Delete Item ID from product_catalog (Admin or Permitted Backoffice)
@@ -844,7 +859,7 @@ export default function App() {
     if (!firebaseUser || !employeeProfile || !canManageCatalog) return;
     try {
       await deleteDoc(doc(db, 'product_catalog', item.id));
-      await recordActivity(
+      void recordActivity(
         'Deleted Item ID from Master Catalog',
         'PO_ENTRY',
         item.itemId,
@@ -864,32 +879,41 @@ export default function App() {
     }
 
     const pocId = editingPoc ? editingPoc.id : generateSafeId('poc');
-    try {
-      await setDoc(doc(db, 'poc_contacts', pocId), {
-        facilityName: pocForm.facilityName.trim().slice(0, 120),
-        pocName: pocForm.pocName.trim().slice(0, 120),
-        designation: (pocForm.designation || 'Warehouse / Facility POC').trim().slice(0, 100),
-        contactNumber: pocForm.contactNumber.trim().slice(0, 60),
-        emailId: pocForm.emailId.trim().slice(0, 120),
-        cityOrHub: pocForm.cityOrHub.trim().slice(0, 100),
-        orgScope: 'instamart_ops',
-        updatedByName: `${employeeProfile.employeeName} (${employeeProfile.employeeId})`.slice(
-          0,
-          100
-        ),
-        updatedAt: serverTimestamp(),
-      });
-      await recordActivity(
-        editingPoc ? 'Updated Instamart POC Contact' : 'Added Instamart POC Contact',
-        'POC_DIRECTORY',
-        pocForm.facilityName.trim(),
-        `${employeeProfile.employeeName} saved POC ${pocForm.pocName.trim()} (${pocForm.contactNumber.trim()}, ${pocForm.emailId.trim()}) for ${pocForm.facilityName.trim()}.`
-      );
-      setIsPocModalOpen(false);
-      setEditingPoc(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `poc_contacts/${pocId}`);
-    }
+    const isUpdate = Boolean(editingPoc);
+    const savedFacility = pocForm.facilityName.trim().slice(0, 120);
+    const savedPocName = pocForm.pocName.trim().slice(0, 120);
+    const savedDesignation = (pocForm.designation || 'Warehouse / Facility POC').trim().slice(0, 100);
+    const savedContact = pocForm.contactNumber.trim().slice(0, 60);
+    const savedEmail = pocForm.emailId.trim().slice(0, 120);
+    const savedCity = pocForm.cityOrHub.trim().slice(0, 100);
+
+    // Close open modal immediately after instant local cache write
+    setIsPocModalOpen(false);
+    setEditingPoc(null);
+
+    setDoc(doc(db, 'poc_contacts', pocId), {
+      facilityName: savedFacility,
+      pocName: savedPocName,
+      designation: savedDesignation,
+      contactNumber: savedContact,
+      emailId: savedEmail,
+      cityOrHub: savedCity,
+      orgScope: 'instamart_ops',
+      updatedByName: `${employeeProfile.employeeName} (${employeeProfile.employeeId})`.slice(
+        0,
+        100
+      ),
+      updatedAt: serverTimestamp(),
+    }).catch((err) => {
+      console.error('POC save notice:', err);
+    });
+
+    void recordActivity(
+      isUpdate ? 'Updated Instamart POC Contact' : 'Added Instamart POC Contact',
+      'POC_DIRECTORY',
+      savedFacility,
+      `${employeeProfile.employeeName} saved POC ${savedPocName} (${savedContact}, ${savedEmail}) for ${savedFacility}.`
+    );
   };
 
   const handleDeletePocContact = async (poc: PocContact) => {
@@ -1003,58 +1027,63 @@ export default function App() {
       `emp_${values.employeeId.replace(/[^a-zA-Z0-9_-]/g, '')}_${Date.now()}`;
     const empRef = doc(db, 'employees', targetUid);
 
-    try {
-      const existingSnap = await getDoc(empRef);
-      if (existingSnap.exists()) {
-        await updateDoc(empRef, {
-          employeeName: values.employeeName.slice(0, 100),
-          employeeId: values.employeeId.slice(0, 50),
-          email: values.email.slice(0, 120),
-          role: values.role,
-          accessStatus: values.accessStatus,
-          permissions: values.permissions,
-          orgScope: 'instamart_ops',
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        await setDoc(empRef, {
-          uid: targetUid,
-          employeeName: values.employeeName.slice(0, 100),
-          employeeId: values.employeeId.slice(0, 50),
-          email: values.email.slice(0, 120),
-          role: values.role,
-          accessStatus: values.accessStatus,
-          permissions: values.permissions,
-          spreadsheetId: '',
-          orgScope: 'instamart_ops',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
+    setIsEmployeeModalOpen(false);
+    setEditingEmployee(null);
 
-      // Also sync any duplicate pre-created records for the same employeeId/email
-      for (const dup of allMatched) {
-        if (dup.uid !== targetUid) {
-          await updateDoc(doc(db, 'employees', dup.uid), {
+    void (async () => {
+      try {
+        const existingSnap = await getDoc(empRef);
+        if (existingSnap.exists()) {
+          await updateDoc(empRef, {
+            employeeName: values.employeeName.slice(0, 100),
+            employeeId: values.employeeId.slice(0, 50),
+            email: values.email.slice(0, 120),
             role: values.role,
             accessStatus: values.accessStatus,
             permissions: values.permissions,
+            orgScope: 'instamart_ops',
             updatedAt: serverTimestamp(),
-          }).catch(() => {});
+          });
+        } else {
+          await setDoc(empRef, {
+            uid: targetUid,
+            employeeName: values.employeeName.slice(0, 100),
+            employeeId: values.employeeId.slice(0, 50),
+            email: values.email.slice(0, 120),
+            role: values.role,
+            accessStatus: values.accessStatus,
+            permissions: values.permissions,
+            spreadsheetId: '',
+            orgScope: 'instamart_ops',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
         }
-      }
 
-      await recordActivity(
-        values.uid
-          ? 'Admin Updated Employee Role & Permissions'
-          : 'Admin Created New Employee Profile',
-        'ADMIN_IAM',
-        values.employeeId,
-        `Admin ${employeeProfile.employeeName} updated ${values.employeeName} (${values.employeeId}) → Dept: ${values.role.toUpperCase()}, Status: ${values.accessStatus}.`
-      );
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `employees/${targetUid}`);
-    }
+        // Also sync any duplicate pre-created records for the same employeeId/email
+        for (const dup of allMatched) {
+          if (dup.uid !== targetUid) {
+            updateDoc(doc(db, 'employees', dup.uid), {
+              role: values.role,
+              accessStatus: values.accessStatus,
+              permissions: values.permissions,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
+          }
+        }
+
+        void recordActivity(
+          values.uid
+            ? 'Admin Updated Employee Role & Permissions'
+            : 'Admin Created New Employee Profile',
+          'ADMIN_IAM',
+          values.employeeId,
+          `Admin ${employeeProfile.employeeName} updated ${values.employeeName} (${values.employeeId}) → Dept: ${values.role.toUpperCase()}, Status: ${values.accessStatus}.`
+        );
+      } catch (err) {
+        console.error('Employee save notice:', err);
+      }
+    })();
   };
 
   // Print Team: Verify PO Document YES / NO (Moving to Warehouse on YES)
@@ -1445,63 +1474,65 @@ export default function App() {
         updatedAt: serverTimestamp(),
       };
 
-      try {
-        await updateDoc(poRef, updatePayload);
-        const shiftedToTransit =
-          editingPo.workflowStage === 'PO_ENTRY' && newStage === 'IN_TRANSIT';
+      const shiftedToTransit =
+        editingPo.workflowStage === 'PO_ENTRY' && newStage === 'IN_TRANSIT';
 
-        if (newStage === 'IN_TRANSIT') {
-          await autoSyncPoProductsToDn({
-            id: editingPo.id,
-            poNumber: values.poNumber,
-            orderDate: values.orderDate,
-            warehouseName: values.warehouseName,
-            itemId: values.itemId,
-            itemName: values.itemName,
-            totalQty: Number(values.totalQty) || 0,
-            invoiceNo: values.invoiceNo,
-            pickupTrackingId: values.pickupTrackingId,
-            asn: values.asn,
-          });
-        }
+      setIsPoModalOpen(false);
+      setEditingPo(null);
 
-        await recordActivity(
-          shiftedToTransit
-            ? 'Pickup YES → Shifted to In Transit & Synced to DN'
-            : newStage === 'GRN'
-            ? 'Delivered → Shifted to GRN'
-            : newStage === 'RTO'
-            ? 'Status RTO → Shifted to RTO'
-            : 'Updated PO Details',
-          newStage === 'GRN'
-            ? 'GRN'
-            : newStage === 'RTO'
-            ? 'RTO_TRACKER'
-            : shiftedToTransit
-            ? 'IN_TRANSIT'
-            : 'PO_ENTRY',
-          values.poNumber,
-          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated PO ${values.poNumber}${
-            shiftedToTransit
-              ? ' and shifted it to In Transit (Auto-synced to DN).'
-              : newStage === 'GRN'
-              ? ' (Marked Delivered → Moved to GRN).'
-              : newStage === 'RTO'
-              ? ' (Marked RTO → Moved to RTO Tracker).'
-              : '.'
-          }`
-        );
-
-        if (newStage === 'GRN' && editingPo.workflowStage !== 'GRN') {
-          setActiveTab('GRN');
-        } else if (newStage === 'RTO' && editingPo.workflowStage !== 'RTO') {
-          setActiveTab('RTO_TRACKER');
-        } else if (shiftedToTransit) {
-          setActiveTab('IN_TRANSIT');
-        }
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${editingPo.id}`);
+      if (newStage === 'GRN' && editingPo.workflowStage !== 'GRN') {
+        setActiveTab('GRN');
+      } else if (newStage === 'RTO' && editingPo.workflowStage !== 'RTO') {
+        setActiveTab('RTO_TRACKER');
+      } else if (shiftedToTransit) {
+        setActiveTab('IN_TRANSIT');
       }
+
+      updateDoc(poRef, updatePayload).catch((err) => {
+        console.error('PO update notice:', err);
+      });
+
+      if (newStage === 'IN_TRANSIT') {
+        void autoSyncPoProductsToDn({
+          id: editingPo.id,
+          poNumber: values.poNumber,
+          orderDate: values.orderDate,
+          warehouseName: values.warehouseName,
+          itemId: values.itemId,
+          itemName: values.itemName,
+          totalQty: Number(values.totalQty) || 0,
+          invoiceNo: values.invoiceNo,
+          pickupTrackingId: values.pickupTrackingId,
+          asn: values.asn,
+        });
+      }
+
+      void recordActivity(
+        shiftedToTransit
+          ? 'Pickup YES → Shifted to In Transit & Synced to DN'
+          : newStage === 'GRN'
+          ? 'Delivered → Shifted to GRN'
+          : newStage === 'RTO'
+          ? 'Status RTO → Shifted to RTO'
+          : 'Updated PO Details',
+        newStage === 'GRN'
+          ? 'GRN'
+          : newStage === 'RTO'
+          ? 'RTO_TRACKER'
+          : shiftedToTransit
+          ? 'IN_TRANSIT'
+          : 'PO_ENTRY',
+        values.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated PO ${values.poNumber}${
+          shiftedToTransit
+            ? ' and shifted it to In Transit (Auto-synced to DN).'
+            : newStage === 'GRN'
+            ? ' (Marked Delivered → Moved to GRN).'
+            : newStage === 'RTO'
+            ? ' (Marked RTO → Moved to RTO Tracker).'
+            : '.'
+        }`
+      );
     } else {
       const poId = generateSafeId('po');
       const newPoDoc: Omit<PurchaseOrder, 'id'> = {
@@ -1577,45 +1608,48 @@ export default function App() {
         updatedAt: serverTimestamp() as any,
       };
 
-      try {
-        await setDoc(doc(db, 'purchase_orders', poId), newPoDoc);
-        if (values.pickupStatus === 'YES') {
-          await autoSyncPoProductsToDn({
-            id: poId,
-            poNumber: values.poNumber,
-            orderDate: values.orderDate,
-            warehouseName: values.warehouseName,
-            itemId: values.itemId,
-            itemName: values.itemName,
-            totalQty: Number(values.totalQty) || 0,
-            invoiceNo: values.invoiceNo,
-            pickupTrackingId: values.pickupTrackingId,
-            asn: values.asn,
-          });
-        }
-        await recordActivity(
-          values.pickupStatus === 'YES'
-            ? 'Created PO & Shifted to In Transit (Auto-Synced to DN)'
-            : newStage === 'PRINT_LOGISTICS'
-            ? 'Created PO & Sent to Print Team'
-            : 'Created New PO Entry',
-          values.pickupStatus === 'YES'
-            ? 'IN_TRANSIT'
-            : newStage === 'PRINT_LOGISTICS'
-            ? 'PRINT_TEAM'
-            : 'PO_ENTRY',
-          values.poNumber,
-          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created PO ${values.poNumber} (Amount: ₹${(newPoDoc.totalAmount || 0).toLocaleString('en-IN')}) for ${values.warehouseName}.${newStage === 'PRINT_LOGISTICS' ? ' Transferred to Print Team.' : ''}`
-        );
+      setIsPoModalOpen(false);
+      setEditingPo(null);
 
-        if (values.pickupStatus === 'YES') {
-          setActiveTab('IN_TRANSIT');
-        } else if (newStage === 'PRINT_LOGISTICS') {
-          setActiveTab('PRINT_TEAM');
-        }
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `purchase_orders/${poId}`);
+      if (values.pickupStatus === 'YES') {
+        setActiveTab('IN_TRANSIT');
+      } else if (newStage === 'PRINT_LOGISTICS') {
+        setActiveTab('PRINT_TEAM');
       }
+
+      setDoc(doc(db, 'purchase_orders', poId), newPoDoc).catch((err) => {
+        console.error('PO create notice:', err);
+      });
+
+      if (values.pickupStatus === 'YES') {
+        void autoSyncPoProductsToDn({
+          id: poId,
+          poNumber: values.poNumber,
+          orderDate: values.orderDate,
+          warehouseName: values.warehouseName,
+          itemId: values.itemId,
+          itemName: values.itemName,
+          totalQty: Number(values.totalQty) || 0,
+          invoiceNo: values.invoiceNo,
+          pickupTrackingId: values.pickupTrackingId,
+          asn: values.asn,
+        });
+      }
+
+      void recordActivity(
+        values.pickupStatus === 'YES'
+          ? 'Created PO & Shifted to In Transit (Auto-Synced to DN)'
+          : newStage === 'PRINT_LOGISTICS'
+          ? 'Created PO & Sent to Print Team'
+          : 'Created New PO Entry',
+        values.pickupStatus === 'YES'
+          ? 'IN_TRANSIT'
+          : newStage === 'PRINT_LOGISTICS'
+          ? 'PRINT_TEAM'
+          : 'PO_ENTRY',
+        values.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created PO ${values.poNumber} (Amount: ₹${(newPoDoc.totalAmount || 0).toLocaleString('en-IN')}) for ${values.warehouseName}.${newStage === 'PRINT_LOGISTICS' ? ' Transferred to Print Team.' : ''}`
+      );
     }
   };
 
@@ -1672,9 +1706,11 @@ export default function App() {
         patch.paymentNotes = updates.paymentNotes;
       }
 
-      await updateDoc(poRef, patch);
+      updateDoc(poRef, patch).catch((err) => {
+        console.error('Payment update notice:', err);
+      });
 
-      await recordActivity(
+      void recordActivity(
         `Recorded PO Payment (${updates.paymentStatus}): ₹${updates.paidAmount.toLocaleString('en-IN')}`,
         'PAYMENT_TRACKER',
         targetPo.poNumber,
@@ -1690,112 +1726,106 @@ export default function App() {
   // Warehouse: Update Box Dimensions & Line Items Packaging (Moves to Print & Logistics when markReady is true)
   const handleWarehouseUpdateBoxDimensions = async (payload: WarehouseBoxUpdatePayload) => {
     if (!firebaseUser || !employeeProfile) return;
-    try {
-      const safeBoxDims = (payload.boxDimensions || '').trim().slice(0, 100);
-      const safeNoOfBoxes = Math.max(0, Number(payload.noOfBoxes) || 0);
-      const updateData: any = {
-        noOfBoxes: safeNoOfBoxes,
-        boxDimensions: safeBoxDims,
-        lineItems: payload.lineItems,
-        updatedByUid: firebaseUser.uid,
-        updatedByName: employeeProfile.employeeName.slice(0, 100),
-        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
-        updatedAt: serverTimestamp(),
-      };
-      if (payload.markReady) {
-        updateData.workflowStage = 'PRINT_LOGISTICS';
-        updateData.packagingStatus = 'READY';
-        updateData.status = 'Packed - Ready for Pickup';
-      }
-      await updateDoc(doc(db, 'purchase_orders', payload.poId), updateData);
-      await recordActivity(
-        payload.markReady
-          ? 'Packaging Complete → Moved to Print & Logistics'
-          : 'Updated Box Dimensions & Packaging',
-        'WAREHOUSE',
-        payload.poNumber || payload.poId,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${safeBoxDims}) & ${safeNoOfBoxes} boxes for PO ${
-          payload.poNumber || payload.poId
-        }${
-          payload.markReady
-            ? ' and marked packaging complete (Moved to Print & Logistics).'
-            : '.'
-        }`
-      );
-    } catch (err: any) {
-      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${payload.poId}`);
+    const safeBoxDims = (payload.boxDimensions || '').trim().slice(0, 100);
+    const safeNoOfBoxes = Math.max(0, Number(payload.noOfBoxes) || 0);
+    const updateData: any = {
+      noOfBoxes: safeNoOfBoxes,
+      boxDimensions: safeBoxDims,
+      lineItems: payload.lineItems,
+      updatedByUid: firebaseUser.uid,
+      updatedByName: employeeProfile.employeeName.slice(0, 100),
+      updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+      updatedAt: serverTimestamp(),
+    };
+    if (payload.markReady) {
+      updateData.workflowStage = 'PRINT_LOGISTICS';
+      updateData.packagingStatus = 'READY';
+      updateData.status = 'Packed - Ready for Pickup';
     }
+    updateDoc(doc(db, 'purchase_orders', payload.poId), updateData).catch((err) => {
+      console.error('Warehouse box update notice:', err);
+    });
+    void recordActivity(
+      payload.markReady
+        ? 'Packaging Complete → Moved to Print & Logistics'
+        : 'Updated Box Dimensions & Packaging',
+      'WAREHOUSE',
+      payload.poNumber || payload.poId,
+      `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated box dimensions (${safeBoxDims}) & ${safeNoOfBoxes} boxes for PO ${
+        payload.poNumber || payload.poId
+      }${
+        payload.markReady
+          ? ' and marked packaging complete (Moved to Print & Logistics).'
+          : '.'
+      }`
+    );
   };
 
   // Warehouse: Mark Packaging Complete & Move to Print & Logistics
   const handleWarehouseMarkPackagingReady = async (po: PurchaseOrder) => {
     if (!firebaseUser || !employeeProfile) return;
-    try {
-      await updateDoc(doc(db, 'purchase_orders', po.id), {
-        workflowStage: 'PRINT_LOGISTICS',
-        packagingStatus: 'READY',
-        status: 'Packed - Ready for Pickup',
-        updatedByUid: firebaseUser.uid,
-        updatedByName: employeeProfile.employeeName.slice(0, 100),
-        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
-        updatedAt: serverTimestamp(),
-      });
-      await recordActivity(
-        'Packaging Complete → Moved to Print & Logistics',
-        'WAREHOUSE',
-        po.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked packaging ready for PO ${po.poNumber}. Transferred to Print Team & Logistics.`
-      );
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${po.id}`);
-    }
+    updateDoc(doc(db, 'purchase_orders', po.id), {
+      workflowStage: 'PRINT_LOGISTICS',
+      packagingStatus: 'READY',
+      status: 'Packed - Ready for Pickup',
+      updatedByUid: firebaseUser.uid,
+      updatedByName: employeeProfile.employeeName.slice(0, 100),
+      updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+      updatedAt: serverTimestamp(),
+    }).catch((err) => {
+      console.error('Warehouse packaging ready notice:', err);
+    });
+    void recordActivity(
+      'Packaging Complete → Moved to Print & Logistics',
+      'WAREHOUSE',
+      po.poNumber,
+      `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked packaging ready for PO ${po.poNumber}. Transferred to Print Team & Logistics.`
+    );
   };
 
   // Warehouse: Mark Shipment Handover / Pickup
   const handleWarehouseMarkPickup = async (payload: WarehousePickupPayload) => {
     if (!firebaseUser || !employeeProfile) return;
-    try {
-      const nowIso = new Date().toISOString();
-      const todayStr = nowIso.slice(0, 10);
-      await updateDoc(doc(db, 'purchase_orders', payload.poId), {
-        pickupStatus: 'YES',
-        warehouseStatus: 'PICKED_UP',
-        status: 'In Transit',
-        workflowStage: 'IN_TRANSIT',
-        logisticsPortal: payload.logisticsPortal,
-        pickupTrackingId: payload.pickupTrackingId,
-        puc: payload.puc,
-        asn: payload.asn,
-        pickupDate: payload.pickupDate || todayStr,
-        pickupMarkedAt: nowIso,
-        updatedAt: serverTimestamp(),
+    const nowIso = new Date().toISOString();
+    const todayStr = nowIso.slice(0, 10);
+    updateDoc(doc(db, 'purchase_orders', payload.poId), {
+      pickupStatus: 'YES',
+      warehouseStatus: 'PICKED_UP',
+      status: 'In Transit',
+      workflowStage: 'IN_TRANSIT',
+      logisticsPortal: payload.logisticsPortal,
+      pickupTrackingId: payload.pickupTrackingId,
+      puc: payload.puc,
+      asn: payload.asn,
+      pickupDate: payload.pickupDate || todayStr,
+      pickupMarkedAt: nowIso,
+      updatedAt: serverTimestamp(),
+    }).catch((err) => {
+      console.error('Warehouse pickup notice:', err);
+    });
+
+    const matchedPo = purchaseOrders.find((p) => p.id === payload.poId);
+    if (matchedPo) {
+      void autoSyncPoProductsToDn({
+        id: matchedPo.id,
+        poNumber: matchedPo.poNumber,
+        orderDate: matchedPo.orderDate,
+        warehouseName: matchedPo.warehouseName,
+        itemId: matchedPo.itemId,
+        itemName: matchedPo.itemName,
+        totalQty: Number(matchedPo.totalQty) || 0,
+        invoiceNo: matchedPo.invoiceNo,
+        pickupTrackingId: payload.pickupTrackingId || matchedPo.pickupTrackingId,
+        asn: payload.asn || matchedPo.asn,
       });
-
-      const matchedPo = purchaseOrders.find((p) => p.id === payload.poId);
-      if (matchedPo) {
-        await autoSyncPoProductsToDn({
-          id: matchedPo.id,
-          poNumber: matchedPo.poNumber,
-          orderDate: matchedPo.orderDate,
-          warehouseName: matchedPo.warehouseName,
-          itemId: matchedPo.itemId,
-          itemName: matchedPo.itemName,
-          totalQty: Number(matchedPo.totalQty) || 0,
-          invoiceNo: matchedPo.invoiceNo,
-          pickupTrackingId: payload.pickupTrackingId || matchedPo.pickupTrackingId,
-          asn: payload.asn || matchedPo.asn,
-        });
-      }
-
-      await recordActivity(
-        'Warehouse Shipment Handover / Picked Up → Moved to Logistics',
-        'WAREHOUSE',
-        payload.poNumber || payload.poId,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked shipment pickup via ${payload.logisticsPortal || 'Transporter'} (Tracking: ${payload.pickupTrackingId || 'N/A'}, PUC: ${payload.puc || 'N/A'}, ASN: ${payload.asn || 'N/A'}) for PO ${payload.poNumber || payload.poId}. Shifted to Logistics Team.`
-      );
-    } catch (err: any) {
-      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${payload.poId}`);
     }
+
+    void recordActivity(
+      'Warehouse Shipment Handover / Picked Up → Moved to Logistics',
+      'WAREHOUSE',
+      payload.poNumber || payload.poId,
+      `${employeeProfile.employeeName} (${employeeProfile.employeeId}) marked shipment pickup via ${payload.logisticsPortal || 'Transporter'} (Tracking: ${payload.pickupTrackingId || 'N/A'}, PUC: ${payload.puc || 'N/A'}, ASN: ${payload.asn || 'N/A'}) for PO ${payload.poNumber || payload.poId}. Shifted to Logistics Team.`
+    );
   };
 
   // Warehouse: Dropdown Status Change (Pending, Processing, Ready for Dispatch, Picked Up)
@@ -2216,19 +2246,22 @@ export default function App() {
         updatePayload.appointmentDate = data.rescheduledApptDate;
       }
 
-      await updateDoc(poRef, updatePayload);
+      const targetPo = attemptTargetPo;
+      setIsAttemptModalOpen(false);
+      setAttemptTargetPo(null);
 
-      await recordActivity(
+      updateDoc(poRef, updatePayload).catch((err) => {
+        console.error('Logistics attempt update notice:', err);
+      });
+
+      void recordActivity(
         data.attemptFailed
           ? `Marked Attempt Failed / Appt Missed (${data.logisticsStatus})`
           : `Updated Logistics Status (${data.logisticsStatus})`,
         'LOGISTICS',
-        attemptTargetPo.poNumber,
-        `PO ${attemptTargetPo.poNumber} Logistics status set to "${data.logisticsStatus}". Reason: "${data.attemptFailReason || 'None'}". Updated by ${employeeProfile.employeeName} (${employeeProfile.employeeId}).`
+        targetPo.poNumber,
+        `PO ${targetPo.poNumber} Logistics status set to "${data.logisticsStatus}". Reason: "${data.attemptFailReason || 'None'}". Updated by ${employeeProfile.employeeName} (${employeeProfile.employeeId}).`
       );
-
-      setIsAttemptModalOpen(false);
-      setAttemptTargetPo(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${attemptTargetPo.id}`);
     }
@@ -2293,22 +2326,28 @@ export default function App() {
         updatePayload.comment = grnTargetPo.comment;
       }
 
-      await updateDoc(poRef, updatePayload);
+      const targetPo = grnTargetPo;
+      setIsGrnModalOpen(false);
+      setActiveTab('GRN');
+
+      updateDoc(poRef, updatePayload).catch((err) => {
+        console.error('GRN update notice:', err);
+      });
 
       // Automatically register a Discrepancy Note (DN) record in Instamart DN Tracker so it appears there immediately
       if (hasDn && (dnQty > 0 || dnAmount > 0) && data.autoCreateDnRecord !== false) {
         const dnDocId = generateSafeId('dn_grn');
-        const cleanGrnNo = data.grnNumber.replace(/[^a-zA-Z0-9_-]/g, '') || grnTargetPo.poNumber;
+        const cleanGrnNo = data.grnNumber.replace(/[^a-zA-Z0-9_-]/g, '') || targetPo.poNumber;
         const newDnDoc: Omit<DnRecord, 'id'> = {
           dnDate: effectiveGrnDate,
           dnNumber: `DN-${cleanGrnNo}`.slice(0, 80),
-          facilityName: grnTargetPo.warehouseName.slice(0, 120),
-          parentPoDetails: `PO: ${grnTargetPo.poNumber} | GRN: ${data.grnNumber} | Inv: ${grnTargetPo.invoiceNo || 'N/A'}`.slice(0, 200),
-          dnSkuIdItemName: `${grnTargetPo.itemId} | ${grnTargetPo.itemName}`.slice(0, 250),
+          facilityName: targetPo.warehouseName.slice(0, 120),
+          parentPoDetails: `PO: ${targetPo.poNumber} | GRN: ${data.grnNumber} | Inv: ${targetPo.invoiceNo || 'N/A'}`.slice(0, 200),
+          dnSkuIdItemName: `${targetPo.itemId} | ${targetPo.itemName}`.slice(0, 250),
           dnQty,
           whPocDetails: `GRN DN Deduction: ₹${dnAmount.toLocaleString('en-IN')} (Net GRN: ₹${netPayableAmount.toLocaleString('en-IN')})`.slice(0, 200),
-          lrNo: (grnTargetPo.pickupTrackingId || grnTargetPo.asn || 'GRN-INWARD').slice(0, 80),
-          reportFileName: `GRN_DN_${grnTargetPo.poNumber}.pdf`.slice(0, 200),
+          lrNo: (targetPo.pickupTrackingId || targetPo.asn || 'GRN-INWARD').slice(0, 80),
+          reportFileName: `GRN_DN_${targetPo.poNumber}.pdf`.slice(0, 200),
           reportFileType: 'application/pdf',
           reportFileSize: 0,
           reportFileDataUrl: '',
@@ -2323,24 +2362,21 @@ export default function App() {
           updatedAt: serverTimestamp(),
         };
 
-        try {
-          await setDoc(doc(db, 'dn_records', dnDocId), newDnDoc);
-        } catch (dnErr) {
+        setDoc(doc(db, 'dn_records', dnDocId), newDnDoc).catch((dnErr) => {
           console.warn('Failed to auto-create DN record in dn_records collection:', dnErr);
-        }
+        });
       }
 
-      await recordActivity(
+      void recordActivity(
         isTransitionFromTransit
           ? 'Inward Success → Shifted to GRN'
           : 'Updated GRN / DN Details',
         'GRN',
-        grnTargetPo.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated GRN ${data.grnNumber} for PO ${grnTargetPo.poNumber}${
+        targetPo.poNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated GRN ${data.grnNumber} for PO ${targetPo.poNumber}${
           hasDn ? ` with DN: ${dnQty} pcs reduced (-₹${dnAmount.toLocaleString('en-IN')}). Net GRN & Payable: ₹${netPayableAmount.toLocaleString('en-IN')}` : ''
         }.`
       );
-      setActiveTab('GRN');
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${grnTargetPo.id}`);
     }
@@ -2351,7 +2387,8 @@ export default function App() {
     if (!firebaseUser || !employeeProfile) return;
 
     if (editingDn) {
-      const dnRef = doc(db, 'dn_records', editingDn.id);
+      const targetDn = editingDn;
+      const dnRef = doc(db, 'dn_records', targetDn.id);
       const updatePayload = {
         dnDate: values.dnDate.trim().slice(0, 30),
         dnNumber: values.dnNumber.trim().slice(0, 80),
@@ -2370,17 +2407,19 @@ export default function App() {
         updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
         updatedAt: serverTimestamp(),
       };
-      try {
-        await updateDoc(dnRef, updatePayload);
-        await recordActivity(
-          'Updated Instamart DN Record',
-          'DN_TRACKER',
-          values.dnNumber,
-          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated DN ${values.dnNumber} (Qty: ${values.dnQty}, LR: ${values.lrNo}).`
-        );
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `dn_records/${editingDn.id}`);
-      }
+      setIsDnModalOpen(false);
+      setEditingDn(null);
+      setPrefillDnFromPo(null);
+
+      updateDoc(dnRef, updatePayload).catch((err) => {
+        console.error('DN update notice:', err);
+      });
+      void recordActivity(
+        'Updated Instamart DN Record',
+        'DN_TRACKER',
+        values.dnNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated DN ${values.dnNumber} (Qty: ${values.dnQty}, LR: ${values.lrNo}).`
+      );
     } else {
       const dnId = generateSafeId('dn');
       const newDnDoc: Omit<DnRecord, 'id'> = {
@@ -2406,17 +2445,19 @@ export default function App() {
         createdAt: serverTimestamp() as any,
         updatedAt: serverTimestamp() as any,
       };
-      try {
-        await setDoc(doc(db, 'dn_records', dnId), newDnDoc);
-        await recordActivity(
-          'Created Instamart DN Record',
-          'DN_TRACKER',
-          values.dnNumber,
-          `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created DN ${values.dnNumber} for ${values.facilityName} (LR No: ${values.lrNo}).`
-        );
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `dn_records/${dnId}`);
-      }
+      setIsDnModalOpen(false);
+      setEditingDn(null);
+      setPrefillDnFromPo(null);
+
+      setDoc(doc(db, 'dn_records', dnId), newDnDoc).catch((err) => {
+        console.error('DN create notice:', err);
+      });
+      void recordActivity(
+        'Created Instamart DN Record',
+        'DN_TRACKER',
+        values.dnNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created DN ${values.dnNumber} for ${values.facilityName} (LR No: ${values.lrNo}).`
+      );
     }
   };
 
@@ -2516,36 +2557,38 @@ export default function App() {
   const handleSaveRtoDetails = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firebaseUser || !employeeProfile || !rtoTargetPo) return;
-    const poRef = doc(db, 'purchase_orders', rtoTargetPo.id);
+    const targetPo = rtoTargetPo;
+    const poRef = doc(db, 'purchase_orders', targetPo.id);
+    const savedForm = { ...rtoForm };
 
-    try {
-      await updateDoc(poRef, {
-        status: 'RTO',
-        isRto: true,
-        workflowStage: 'RTO',
-        rtoPickedStatus: rtoForm.rtoPickedStatus,
-        rtoTrackingId: rtoForm.rtoTrackingId.trim().slice(0, 100),
-        rtoCourierPartner: rtoForm.rtoCourierPartner.trim().slice(0, 100),
-        rtoPickDate: rtoForm.rtoPickDate.trim().slice(0, 30),
-        rtoReceivedAtWh: rtoForm.rtoReceivedAtWh,
-        rtoReason: rtoForm.rtoReason.trim().slice(0, 200),
-        rtoRemarks: rtoForm.rtoRemarks.trim().slice(0, 500),
-        updatedByUid: firebaseUser.uid,
-        updatedByName: employeeProfile.employeeName.slice(0, 100),
-        updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
-        updatedAt: serverTimestamp(),
-      });
-      await recordActivity(
-        `Updated RTO Tracking & Pickup Status (Picked: ${rtoForm.rtoPickedStatus})`,
-        'RTO_TRACKER',
-        rtoTargetPo.poNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated RTO for PO ${rtoTargetPo.poNumber} — Picked: ${rtoForm.rtoPickedStatus}, Tracking ID: ${rtoForm.rtoTrackingId || 'N/A'}, Courier: ${rtoForm.rtoCourierPartner || 'N/A'}, Received at WH: ${rtoForm.rtoReceivedAtWh}. Automatically shifted from In-Transit to RTO Management.`
-      );
-      setIsRtoModalOpen(false);
-      setRtoTargetPo(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `purchase_orders/${rtoTargetPo.id}`);
-    }
+    setIsRtoModalOpen(false);
+    setRtoTargetPo(null);
+
+    updateDoc(poRef, {
+      status: 'RTO',
+      isRto: true,
+      workflowStage: 'RTO',
+      rtoPickedStatus: savedForm.rtoPickedStatus,
+      rtoTrackingId: savedForm.rtoTrackingId.trim().slice(0, 100),
+      rtoCourierPartner: savedForm.rtoCourierPartner.trim().slice(0, 100),
+      rtoPickDate: savedForm.rtoPickDate.trim().slice(0, 30),
+      rtoReceivedAtWh: savedForm.rtoReceivedAtWh,
+      rtoReason: savedForm.rtoReason.trim().slice(0, 200),
+      rtoRemarks: savedForm.rtoRemarks.trim().slice(0, 500),
+      updatedByUid: firebaseUser.uid,
+      updatedByName: employeeProfile.employeeName.slice(0, 100),
+      updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+      updatedAt: serverTimestamp(),
+    }).catch((err) => {
+      console.error('RTO update notice:', err);
+    });
+
+    void recordActivity(
+      `Updated RTO Tracking & Pickup Status (Picked: ${savedForm.rtoPickedStatus})`,
+      'RTO_TRACKER',
+      targetPo.poNumber,
+      `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated RTO for PO ${targetPo.poNumber} — Picked: ${savedForm.rtoPickedStatus}, Tracking ID: ${savedForm.rtoTrackingId || 'N/A'}, Courier: ${savedForm.rtoCourierPartner || 'N/A'}, Received at WH: ${savedForm.rtoReceivedAtWh}. Automatically shifted from In-Transit to RTO Management.`
+    );
   };
 
   // Quick toggle RTO Picked Status (YES / NO / PENDING) directly from RTO table
@@ -4926,80 +4969,6 @@ export default function App() {
                 />
               </>
             )}
-            </div>
-
-            {/* Logistics DN Notes History Sub-Table */}
-            <div
-              className={`rounded-xl border overflow-hidden ${
-                darkMode
-                  ? 'bg-slate-900 border-slate-800'
-                  : isGrey
-                  ? 'bg-zinc-100 border-zinc-300'
-                  : 'bg-white border-slate-200'
-              }`}
-            >
-              {filteredDnList.length === 0 ? (
-                <div className="p-6 text-center text-xs text-slate-500">
-                  No DN Notes logged yet. Click "+ DN Note" on any delivery row above to record a DN Note.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr
-                        className={`border-b font-semibold ${
-                          darkMode
-                            ? 'bg-slate-950/60 border-slate-800 text-slate-400'
-                            : 'bg-slate-50 border-slate-200 text-slate-600'
-                        }`}
-                      >
-                        <th className="py-2.5 px-4 whitespace-nowrap">DN Date</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">DN Number</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">Facility Name</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">Parent PO Details</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">Product SKU | Item Name</th>
-                        <th className="py-2.5 px-4 text-right whitespace-nowrap">DN QTY</th>
-                        <th className="py-2.5 px-4 whitespace-nowrap">LR No</th>
-                        <th className="py-2.5 px-4 text-right whitespace-nowrap">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {filteredDnList.map((dn) => (
-                        <tr key={dn.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                          <td className="py-2.5 px-4 font-mono whitespace-nowrap">{dn.dnDate}</td>
-                          <td className="py-2.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">
-                            {dn.dnNumber}
-                          </td>
-                          <td className="py-2.5 px-4 whitespace-nowrap">{dn.facilityName}</td>
-                          <td className="py-2.5 px-4 font-mono whitespace-nowrap">
-                            {dn.parentPoDetails}
-                          </td>
-                          <td className="py-2.5 px-4 font-medium">{dn.dnSkuIdItemName}</td>
-                          <td className="py-2.5 px-4 text-right font-mono font-bold text-red-600 dark:text-red-400">
-                            {dn.dnQty}
-                          </td>
-                          <td className="py-2.5 px-4 font-mono font-semibold">{dn.lrNo}</td>
-                          <td className="py-2.5 px-4 text-right whitespace-nowrap">
-                            {canUserManageDn && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingDn(dn);
-                                  setPrefillDnFromPo(null);
-                                  setIsDnModalOpen(true);
-                                }}
-                                className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 text-xs font-semibold cursor-pointer"
-                              >
-                                Edit DN Note
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
           </div>
         )}
