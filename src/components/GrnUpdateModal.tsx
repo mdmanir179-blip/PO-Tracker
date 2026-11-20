@@ -14,6 +14,7 @@ export interface GrnUpdateSubmitData {
   netPayableAmount: number;
   grnDnSummary: string;
   status: string;
+  dnNumber?: string;
   dnReason?: string;
   autoCreateDnRecord?: boolean;
 }
@@ -23,6 +24,7 @@ interface GrnUpdateModalProps {
   onClose: () => void;
   po: PurchaseOrder | null;
   mode: 'INWARD_TO_GRN' | 'UPDATE_GRN_DN';
+  initialDnNumber?: string;
   onConfirm: (data: GrnUpdateSubmitData) => Promise<void>;
   onOpenDnTrackerWithPo: (po: PurchaseOrder) => void;
   darkMode: boolean;
@@ -33,6 +35,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
   onClose,
   po,
   mode,
+  initialDnNumber,
   onConfirm,
   onOpenDnTrackerWithPo,
   darkMode,
@@ -40,6 +43,8 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
   const [grnNumber, setGrnNumber] = useState('');
   const [grnDate, setGrnDate] = useState('');
   const [hasDn, setHasDn] = useState(false);
+  const [dnNumber, setDnNumber] = useState('');
+  const [isManualDnNumber, setIsManualDnNumber] = useState(false);
   const [dnReason, setDnReason] = useState('Transit Damage / Broken Packaging');
   const [grnDnSummary, setGrnDnSummary] = useState('');
   const [status, setStatus] = useState('GRN Completed');
@@ -60,10 +65,15 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
 
   useEffect(() => {
     if (po) {
-      setGrnNumber(po.grnNumber || `GRN-${po.poNumber.replace(/[^0-9A-Z]/gi, '').slice(-6)}`);
+      const defaultGrn = po.grnNumber || `GRN-${po.poNumber.replace(/[^0-9A-Z]/gi, '').slice(-6)}`;
+      setGrnNumber(defaultGrn);
       setGrnDate(po.grnDate || po.appointmentDate || po.shipDate || new Date().toISOString().slice(0, 10));
       const initialHasDn = po.hasDn || false;
       setHasDn(initialHasDn);
+      const savedDnNo = (po.dnNumber && po.dnNumber.trim()) || (initialDnNumber && initialDnNumber.trim()) || '';
+      const cleanDefaultGrn = defaultGrn.replace(/[^a-zA-Z0-9_-]/g, '') || po.poNumber;
+      setDnNumber(savedDnNo || `DN-${cleanDefaultGrn}`);
+      setIsManualDnNumber(Boolean(savedDnNo));
       const reasonMatch = (po.grnDnSummary || '').match(/\[Reason:\s*([^\]]+)\]/i);
       const initialReason =
         (po.dnReason && po.dnReason.trim()) ||
@@ -111,7 +121,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
       setItemDnQuantities(initialLineDn);
     }
     setError(null);
-  }, [po, isOpen]);
+  }, [po, isOpen, initialDnNumber]);
 
   if (!isOpen || !po) return null;
 
@@ -203,6 +213,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
         netPayableAmount,
         grnDnSummary: finalSummary,
         status,
+        dnNumber: hasDn ? (dnNumber.trim() || `DN-${grnNumber.trim().replace(/[^a-zA-Z0-9_-]/g, '') || po.poNumber}`) : '',
         dnReason: hasDn ? dnReason : '',
         autoCreateDnRecord,
       });
@@ -278,7 +289,14 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
                 type="text"
                 required
                 value={grnNumber}
-                onChange={(e) => setGrnNumber(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setGrnNumber(val);
+                  if (!isManualDnNumber) {
+                    const clean = val.replace(/[^a-zA-Z0-9_-]/g, '') || po.poNumber;
+                    setDnNumber(`DN-${clean}`);
+                  }
+                }}
                 placeholder="e.g. GRN-IM-90214"
                 className={`${inputClass} font-mono font-bold text-emerald-600 dark:text-emerald-400`}
               />
@@ -344,23 +362,41 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
 
             {hasDn && (
               <div className="mt-4 pt-4 border-t border-amber-200/50 dark:border-amber-900/50 space-y-4">
-                {/* Reason Selection */}
-                <div>
-                  <label className="block text-xs font-semibold mb-1 text-slate-700 dark:text-slate-300">
-                    Discrepancy / Rejection Reason *
-                  </label>
-                  <select
-                    value={dnReason}
-                    onChange={(e) => setDnReason(e.target.value)}
-                    className={inputClass}
-                  >
-                    <option value="Transit Damage / Broken Packaging">Transit Damage / Broken Packaging</option>
-                    <option value="Physical Shortage / Item Missing at Inward">Physical Shortage / Item Missing at Inward</option>
-                    <option value="Expiry / Near Expiry Date Rejection">Expiry / Near Expiry Date Rejection</option>
-                    <option value="Quality Defect / Seal Tampered">Quality Defect / Seal Tampered</option>
-                    <option value="Wrong SKU / Barcode Mismatch">Wrong SKU / Barcode Mismatch</option>
-                    <option value="Other Warehouse Discrepancy">Other Warehouse Discrepancy</option>
-                  </select>
+                {/* DN Number & Reason Selection */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-slate-700 dark:text-slate-300">
+                      DN Number *
+                    </label>
+                    <input
+                      type="text"
+                      required={hasDn}
+                      value={dnNumber}
+                      onChange={(e) => {
+                        setIsManualDnNumber(true);
+                        setDnNumber(e.target.value);
+                      }}
+                      placeholder={`e.g. DN-${grnNumber || po.poNumber}`}
+                      className={`${inputClass} font-mono font-bold text-rose-600 dark:text-rose-400`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1 text-slate-700 dark:text-slate-300">
+                      Discrepancy / Rejection Reason *
+                    </label>
+                    <select
+                      value={dnReason}
+                      onChange={(e) => setDnReason(e.target.value)}
+                      className={inputClass}
+                    >
+                      <option value="Transit Damage / Broken Packaging">Transit Damage / Broken Packaging</option>
+                      <option value="Physical Shortage / Item Missing at Inward">Physical Shortage / Item Missing at Inward</option>
+                      <option value="Expiry / Near Expiry Date Rejection">Expiry / Near Expiry Date Rejection</option>
+                      <option value="Quality Defect / Seal Tampered">Quality Defect / Seal Tampered</option>
+                      <option value="Wrong SKU / Barcode Mismatch">Wrong SKU / Barcode Mismatch</option>
+                      <option value="Other Warehouse Discrepancy">Other Warehouse Discrepancy</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Line Items or Product Discrepancy Quantity */}
@@ -555,7 +591,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
                     <span>Automatically record this product in Instamart DN Tracker with GRN Number</span>
                   </label>
                   <span className="text-[10px] text-orange-500 font-mono font-semibold">
-                    DN-{grnNumber || po.poNumber}
+                    {dnNumber || `DN-${grnNumber || po.poNumber}`}
                   </span>
                 </div>
               </div>

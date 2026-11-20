@@ -2301,12 +2301,17 @@ export default function App() {
 
     try {
       const cleanDnReason = hasDn ? (data.dnReason || '').trim().slice(0, 200) : '';
+      const cleanGrnNo = data.grnNumber.replace(/[^a-zA-Z0-9_-]/g, '') || grnTargetPo.poNumber;
+      const cleanDnNumber = hasDn
+        ? ((data.dnNumber || '').trim() || `DN-${cleanGrnNo}`).slice(0, 80)
+        : '';
       const updatePayload: any = {
         status: data.status.slice(0, 60),
         grnNumber: data.grnNumber.slice(0, 80),
         grnDate: effectiveGrnDate,
         grnDnSummary: data.grnDnSummary.slice(0, 500),
         hasDn,
+        dnNumber: cleanDnNumber,
         dnReason: cleanDnReason,
         dnQty,
         dnAmount,
@@ -2338,16 +2343,17 @@ export default function App() {
 
       // Automatically register or update a Discrepancy Note (DN) record in Instamart DN Tracker
       if (hasDn && (dnQty > 0 || dnAmount > 0) && data.autoCreateDnRecord !== false) {
-        const cleanGrnNo = data.grnNumber.replace(/[^a-zA-Z0-9_-]/g, '') || targetPo.poNumber;
         const existingMatchingDn = dnRecords.find(
           (d) =>
             (d.parentPoDetails || '').toLowerCase().includes(targetPo.poNumber.toLowerCase()) ||
+            (targetPo.dnNumber && (d.dnNumber || '').toLowerCase() === targetPo.dnNumber.toLowerCase()) ||
             (data.grnNumber && (d.dnNumber || '').toLowerCase().includes(data.grnNumber.toLowerCase()))
         );
 
         if (existingMatchingDn) {
           updateDoc(doc(db, 'dn_records', existingMatchingDn.id), {
             dnDate: effectiveGrnDate,
+            dnNumber: cleanDnNumber,
             dnQty,
             dnReason: cleanDnReason,
             whPocDetails: `GRN DN Deduction: ₹${dnAmount.toLocaleString('en-IN')} (Net GRN: ₹${netPayableAmount.toLocaleString('en-IN')})`.slice(0, 200),
@@ -2362,7 +2368,7 @@ export default function App() {
           const dnDocId = generateSafeId('dn_grn');
           const newDnDoc: Omit<DnRecord, 'id'> = {
             dnDate: effectiveGrnDate,
-            dnNumber: `DN-${cleanGrnNo}`.slice(0, 80),
+            dnNumber: cleanDnNumber,
             facilityName: targetPo.warehouseName.slice(0, 120),
             parentPoDetails: `PO: ${targetPo.poNumber} | GRN: ${data.grnNumber} | Inv: ${targetPo.invoiceNo || 'N/A'}`.slice(0, 200),
             dnSkuIdItemName: `${targetPo.itemId} | ${targetPo.itemName}`.slice(0, 250),
@@ -2410,15 +2416,26 @@ export default function App() {
   const handleSaveDn = async (values: DnFormValues) => {
     if (!firebaseUser || !employeeProfile) return;
 
+    const cleanDnNumber = values.dnNumber.trim().slice(0, 80);
     const cleanReason = (values.dnReason || '').trim().slice(0, 200);
     const parentLower = values.parentPoDetails.toLowerCase();
-    const dnNumLower = values.dnNumber.toLowerCase();
+    const dnNumLower = cleanDnNumber.toLowerCase();
+    const prevParentLower = (editingDn?.parentPoDetails || '').toLowerCase();
+    const prevDnNumLower = (editingDn?.dnNumber || '').toLowerCase();
     const matchedPo =
       prefillDnFromPo ||
       purchaseOrders.find(
         (p) =>
-          (p.poNumber && (parentLower.includes(p.poNumber.toLowerCase()) || dnNumLower.includes(p.poNumber.toLowerCase()))) ||
-          (p.grnNumber && dnNumLower.includes(p.grnNumber.toLowerCase()))
+          (p.poNumber &&
+            (parentLower.includes(p.poNumber.toLowerCase()) ||
+              dnNumLower.includes(p.poNumber.toLowerCase()) ||
+              prevParentLower.includes(p.poNumber.toLowerCase()))) ||
+          (p.dnNumber &&
+            (p.dnNumber.toLowerCase() === dnNumLower ||
+              (prevDnNumLower && p.dnNumber.toLowerCase() === prevDnNumLower))) ||
+          (p.grnNumber &&
+            (dnNumLower.includes(p.grnNumber.toLowerCase()) ||
+              (prevDnNumLower && prevDnNumLower.includes(p.grnNumber.toLowerCase()))))
       );
 
     if (editingDn) {
@@ -2426,7 +2443,7 @@ export default function App() {
       const dnRef = doc(db, 'dn_records', targetDn.id);
       const updatePayload = {
         dnDate: values.dnDate.trim().slice(0, 30),
-        dnNumber: values.dnNumber.trim().slice(0, 80),
+        dnNumber: cleanDnNumber,
         facilityName: values.facilityName.trim().slice(0, 120),
         parentPoDetails: values.parentPoDetails.trim().slice(0, 200),
         dnSkuIdItemName: values.dnSkuIdItemName.trim().slice(0, 250),
@@ -2450,28 +2467,30 @@ export default function App() {
       updateDoc(dnRef, updatePayload).catch((err) => {
         console.error('DN update notice:', err);
       });
-      if (matchedPo && cleanReason) {
-        updateDoc(doc(db, 'purchase_orders', matchedPo.id), {
-          dnReason: cleanReason,
+      if (matchedPo) {
+        const poSyncPatch: Record<string, any> = {
+          dnNumber: cleanDnNumber,
           updatedByUid: firebaseUser.uid,
           updatedByName: employeeProfile.employeeName.slice(0, 100),
           updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
           updatedAt: serverTimestamp(),
-        }).catch((err) => {
-          console.warn('PO dnReason sync notice:', err);
+        };
+        if (cleanReason) poSyncPatch.dnReason = cleanReason;
+        updateDoc(doc(db, 'purchase_orders', matchedPo.id), poSyncPatch).catch((err) => {
+          console.warn('PO dnNumber/dnReason sync notice:', err);
         });
       }
       void recordActivity(
         'Updated Instamart DN Record',
         'DN_TRACKER',
-        values.dnNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated DN ${values.dnNumber} (Qty: ${values.dnQty}, LR: ${values.lrNo}).`
+        cleanDnNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) updated DN ${cleanDnNumber} (Qty: ${values.dnQty}, LR: ${values.lrNo}).`
       );
     } else {
       const dnId = generateSafeId('dn');
       const newDnDoc: Omit<DnRecord, 'id'> = {
         dnDate: values.dnDate.trim().slice(0, 30),
-        dnNumber: values.dnNumber.trim().slice(0, 80),
+        dnNumber: cleanDnNumber,
         facilityName: values.facilityName.trim().slice(0, 120),
         parentPoDetails: values.parentPoDetails.trim().slice(0, 200),
         dnSkuIdItemName: values.dnSkuIdItemName.trim().slice(0, 250),
@@ -2500,22 +2519,24 @@ export default function App() {
       setDoc(doc(db, 'dn_records', dnId), newDnDoc).catch((err) => {
         console.error('DN create notice:', err);
       });
-      if (matchedPo && cleanReason) {
-        updateDoc(doc(db, 'purchase_orders', matchedPo.id), {
-          dnReason: cleanReason,
+      if (matchedPo) {
+        const poSyncPatch: Record<string, any> = {
+          dnNumber: cleanDnNumber,
           updatedByUid: firebaseUser.uid,
           updatedByName: employeeProfile.employeeName.slice(0, 100),
           updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
           updatedAt: serverTimestamp(),
-        }).catch((err) => {
-          console.warn('PO dnReason sync notice:', err);
+        };
+        if (cleanReason) poSyncPatch.dnReason = cleanReason;
+        updateDoc(doc(db, 'purchase_orders', matchedPo.id), poSyncPatch).catch((err) => {
+          console.warn('PO dnNumber/dnReason sync notice:', err);
         });
       }
       void recordActivity(
         'Created Instamart DN Record',
         'DN_TRACKER',
-        values.dnNumber,
-        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created DN ${values.dnNumber} for ${values.facilityName} (LR No: ${values.lrNo}).`
+        cleanDnNumber,
+        `${employeeProfile.employeeName} (${employeeProfile.employeeId}) created DN ${cleanDnNumber} for ${values.facilityName} (LR No: ${values.lrNo}).`
       );
     }
   };
@@ -3005,18 +3026,28 @@ export default function App() {
   const grnDnList = useMemo(
     () =>
       purchaseOrders
-        .filter(
-          (po) =>
-            po.hasDn &&
-            (po.workflowStage === 'GRN' || po.inwardStatus === 'SUCCESS') &&
-            (po.poNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              po.grnNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              po.warehouseName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              po.itemName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              po.itemId.toLowerCase().includes(searchQuery.toLowerCase()))
-        )
+        .filter((po) => {
+          if (!po.hasDn || (po.workflowStage !== 'GRN' && po.inwardStatus !== 'SUCCESS')) return false;
+          const q = searchQuery.toLowerCase();
+          if (!q) return true;
+          const matchingDn = dnRecords.find(
+            (d) =>
+              d.parentPoDetails.toLowerCase().includes(po.poNumber.toLowerCase()) ||
+              (po.dnNumber && d.dnNumber.toLowerCase() === po.dnNumber.toLowerCase()) ||
+              (po.grnNumber && d.dnNumber.toLowerCase().includes(po.grnNumber.toLowerCase()))
+          );
+          return (
+            po.poNumber.toLowerCase().includes(q) ||
+            po.grnNumber.toLowerCase().includes(q) ||
+            (po.dnNumber || '').toLowerCase().includes(q) ||
+            (matchingDn?.dnNumber || '').toLowerCase().includes(q) ||
+            po.warehouseName.toLowerCase().includes(q) ||
+            po.itemName.toLowerCase().includes(q) ||
+            po.itemId.toLowerCase().includes(q)
+          );
+        })
         .sort(compareLastAddedFirst),
-    [purchaseOrders, searchQuery]
+    [purchaseOrders, dnRecords, searchQuery]
   );
 
   const filteredDnList = useMemo(
@@ -5818,6 +5849,11 @@ export default function App() {
                                 <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-600 dark:text-red-400 font-bold text-[11px] block text-center">
                                   YES (DN Raised)
                                 </span>
+                                {po.dnNumber && (
+                                  <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 block text-center">
+                                    {po.dnNumber}
+                                  </span>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => setActiveTab('DN_TRACKER')}
@@ -5929,6 +5965,7 @@ export default function App() {
                               : 'bg-slate-50 border-slate-200 text-slate-600'
                           }`}
                         >
+                          <th className="py-2.5 px-4 whitespace-nowrap">DN Number &amp; Date</th>
                           <th className="py-2.5 px-4 whitespace-nowrap">GRN Number &amp; Date</th>
                           <th className="py-2.5 px-4 whitespace-nowrap">PO Number &amp; Date</th>
                           <th className="py-2.5 px-4 whitespace-nowrap">Facility / Warehouse</th>
@@ -5948,8 +5985,14 @@ export default function App() {
                         const paymentInfo = calculatePaymentDetails(po);
                         const matchingDn = dnRecords.find((d) =>
                           d.parentPoDetails.toLowerCase().includes(po.poNumber.toLowerCase()) ||
+                          (po.dnNumber && d.dnNumber.toLowerCase() === po.dnNumber.toLowerCase()) ||
                           (po.grnNumber && d.dnNumber.toLowerCase().includes(po.grnNumber.toLowerCase()))
                         );
+                        const displayDnNumber =
+                          (po.dnNumber && po.dnNumber.trim()) ||
+                          (matchingDn?.dnNumber && matchingDn.dnNumber.trim()) ||
+                          (po.grnNumber ? `DN-${po.grnNumber.replace(/[^a-zA-Z0-9_-]/g, '')}` : `DN-${po.poNumber.replace(/[^a-zA-Z0-9_-]/g, '')}`);
+                        const displayDnDate = matchingDn?.dnDate || po.grnDate || po.shipDate || '-';
                         const summaryReasonMatch = (po.grnDnSummary || '').match(/\[Reason:\s*([^\]]+)\]/i);
                         const selectedReason =
                           (po.dnReason && po.dnReason.trim()) ||
@@ -5961,6 +6004,12 @@ export default function App() {
                             key={po.id}
                             className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
                           >
+                            <td className="py-2.5 px-4 font-mono whitespace-nowrap">
+                              <div className="font-bold text-rose-600 dark:text-rose-400">
+                                {displayDnNumber}
+                              </div>
+                              <div className="text-[11px] text-slate-500">{displayDnDate}</div>
+                            </td>
                             <td className="py-2.5 px-4 font-mono whitespace-nowrap">
                               <div className="font-bold text-emerald-600 dark:text-emerald-400">
                                 {po.grnNumber || 'GRN-INWARD'}
@@ -6768,6 +6817,17 @@ export default function App() {
         onClose={() => setIsGrnModalOpen(false)}
         po={grnTargetPo}
         mode={grnModalMode}
+        initialDnNumber={
+          grnTargetPo
+            ? grnTargetPo.dnNumber ||
+              dnRecords.find(
+                (d) =>
+                  d.parentPoDetails.toLowerCase().includes(grnTargetPo.poNumber.toLowerCase()) ||
+                  (grnTargetPo.grnNumber &&
+                    d.dnNumber.toLowerCase().includes(grnTargetPo.grnNumber.toLowerCase()))
+              )?.dnNumber
+            : undefined
+        }
         onConfirm={handleConfirmGrnUpdate}
         onOpenDnTrackerWithPo={(po) => {
           setEditingDn(null);

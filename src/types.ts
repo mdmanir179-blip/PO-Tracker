@@ -113,6 +113,7 @@ export interface PurchaseOrder {
   grnDate?: string;
   grnDnSummary: string;
   hasDn: boolean;
+  dnNumber?: string;
   dnReason?: string;
   // RTO Management System Fields
   isRto?: boolean;

@@ -267,6 +267,11 @@
           "type": "boolean",
           "description": "Whether this GRN has any Discrepancy Note (DN)"
         },
+        "dnNumber": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Discrepancy Note (DN) Number entered for this PO"
+        },
         "dnReason": {
           "type": "string",
           "maxLength": 200,
