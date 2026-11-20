@@ -64,6 +64,12 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
       setGrnDate(po.grnDate || po.appointmentDate || po.shipDate || new Date().toISOString().slice(0, 10));
       const initialHasDn = po.hasDn || false;
       setHasDn(initialHasDn);
+      const reasonMatch = (po.grnDnSummary || '').match(/\[Reason:\s*([^\]]+)\]/i);
+      const initialReason =
+        (po.dnReason && po.dnReason.trim()) ||
+        (reasonMatch ? reasonMatch[1].trim() : '') ||
+        'Transit Damage / Broken Packaging';
+      setDnReason(initialReason);
       setGrnDnSummary(po.grnDnSummary || '');
       setStatus(
         po.workflowStage === 'GRN'
@@ -173,7 +179,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
     setIsSaving(true);
     setError(null);
 
-    // Auto-draft remarks if blank
+    // Auto-draft or sync reason tag in remarks
     let finalSummary = grnDnSummary.trim();
     if (hasDn && !finalSummary) {
       finalSummary = `DN Discrepancy: ${effectiveDnQty} pcs reduced (-${formatINR(
@@ -181,6 +187,8 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
       )}) [Reason: ${dnReason}]. Accepted GRN Inward: ${acceptedQty} pcs (${formatINR(
         netPayableAmount
       )}). Synced to DN Tracker.`;
+    } else if (hasDn && /\[Reason:\s*[^\]]+\]/i.test(finalSummary)) {
+      finalSummary = finalSummary.replace(/\[Reason:\s*[^\]]+\]/i, `[Reason: ${dnReason}]`);
     }
 
     try {
@@ -195,7 +203,7 @@ export const GrnUpdateModal: React.FC<GrnUpdateModalProps> = ({
         netPayableAmount,
         grnDnSummary: finalSummary,
         status,
-        dnReason,
+        dnReason: hasDn ? dnReason : '',
         autoCreateDnRecord,
       });
       onClose();

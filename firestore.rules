@@ -77,7 +77,7 @@ service cloud.firestore {
           'pickupTrackingId', 'puc', 'asn', 'clearBagNo', 'comment',
           'pickupStatus', 'pickupDate', 'pickupMarkedAt', 'printVerified', 'printVerifiedBy',
           'workflowStage', 'inwardStatus', 'grnNumber', 'grnDate',
-          'grnDnSummary', 'hasDn',
+          'grnDnSummary', 'hasDn', 'dnReason',
           'isRto', 'rtoPickedStatus', 'rtoTrackingId', 'rtoCourierPartner',
           'rtoPickDate', 'rtoReceivedAtWh', 'rtoReason', 'rtoRemarks',
           'totalAmount', 'originalAmount', 'dnQty', 'dnAmount', 'acceptedQty', 'paidAmount', 'paymentStatus', 'paymentDueDate',
@@ -116,6 +116,7 @@ service cloud.firestore {
         data.grnNumber is string && data.grnNumber.size() <= 80 &&
         data.grnDnSummary is string && data.grnDnSummary.size() <= 500 &&
         data.hasDn is bool &&
+        (!('dnReason' in data) || (data.dnReason is string && data.dnReason.size() <= 200)) &&
         data.orgScope is string && data.orgScope.size() <= 30 && data.orgScope == 'instamart_ops' &&
         data.createdByUid is string && data.createdByUid.size() <= 128 && data.createdByUid.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 100 &&
@@ -139,7 +140,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'dnDate', 'dnNumber', 'facilityName', 'parentPoDetails',
-          'dnSkuIdItemName', 'dnQty', 'whPocDetails', 'lrNo',
+          'dnSkuIdItemName', 'dnQty', 'whPocDetails', 'dnReason', 'lrNo',
           'reportFileName', 'reportFileType', 'reportFileSize', 'reportFileDataUrl',
           'orgScope',
           'createdByUid', 'createdByName', 'createdByEmpId',
@@ -153,6 +154,7 @@ service cloud.firestore {
         data.dnSkuIdItemName is string && data.dnSkuIdItemName.size() >= 1 && data.dnSkuIdItemName.size() <= 250 &&
         data.dnQty is number && data.dnQty >= 0 &&
         data.whPocDetails is string && data.whPocDetails.size() <= 200 &&
+        (!('dnReason' in data) || (data.dnReason is string && data.dnReason.size() <= 200)) &&
         data.lrNo is string && data.lrNo.size() <= 80 &&
         data.reportFileName is string && data.reportFileName.size() <= 200 &&
         data.reportFileType is string && data.reportFileType.size() <= 100 &&

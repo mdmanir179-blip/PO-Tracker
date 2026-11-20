@@ -2300,12 +2300,14 @@ export default function App() {
       : (typeof data.netPayableAmount === 'number' ? data.netPayableAmount : originalAmount);
 
     try {
+      const cleanDnReason = hasDn ? (data.dnReason || '').trim().slice(0, 200) : '';
       const updatePayload: any = {
         status: data.status.slice(0, 60),
         grnNumber: data.grnNumber.slice(0, 80),
         grnDate: effectiveGrnDate,
         grnDnSummary: data.grnDnSummary.slice(0, 500),
         hasDn,
+        dnReason: cleanDnReason,
         dnQty,
         dnAmount,
         acceptedQty,
@@ -2334,37 +2336,59 @@ export default function App() {
         console.error('GRN update notice:', err);
       });
 
-      // Automatically register a Discrepancy Note (DN) record in Instamart DN Tracker so it appears there immediately
+      // Automatically register or update a Discrepancy Note (DN) record in Instamart DN Tracker
       if (hasDn && (dnQty > 0 || dnAmount > 0) && data.autoCreateDnRecord !== false) {
-        const dnDocId = generateSafeId('dn_grn');
         const cleanGrnNo = data.grnNumber.replace(/[^a-zA-Z0-9_-]/g, '') || targetPo.poNumber;
-        const newDnDoc: Omit<DnRecord, 'id'> = {
-          dnDate: effectiveGrnDate,
-          dnNumber: `DN-${cleanGrnNo}`.slice(0, 80),
-          facilityName: targetPo.warehouseName.slice(0, 120),
-          parentPoDetails: `PO: ${targetPo.poNumber} | GRN: ${data.grnNumber} | Inv: ${targetPo.invoiceNo || 'N/A'}`.slice(0, 200),
-          dnSkuIdItemName: `${targetPo.itemId} | ${targetPo.itemName}`.slice(0, 250),
-          dnQty,
-          whPocDetails: `GRN DN Deduction: ₹${dnAmount.toLocaleString('en-IN')} (Net GRN: ₹${netPayableAmount.toLocaleString('en-IN')})`.slice(0, 200),
-          lrNo: (targetPo.pickupTrackingId || targetPo.asn || 'GRN-INWARD').slice(0, 80),
-          reportFileName: `GRN_DN_${targetPo.poNumber}.pdf`.slice(0, 200),
-          reportFileType: 'application/pdf',
-          reportFileSize: 0,
-          reportFileDataUrl: '',
-          orgScope: 'instamart_ops',
-          createdByUid: firebaseUser.uid,
-          createdByName: employeeProfile.employeeName.slice(0, 100),
-          createdByEmpId: employeeProfile.employeeId.slice(0, 50),
-          updatedByUid: firebaseUser.uid,
-          updatedByName: employeeProfile.employeeName.slice(0, 100),
-          updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        };
+        const existingMatchingDn = dnRecords.find(
+          (d) =>
+            (d.parentPoDetails || '').toLowerCase().includes(targetPo.poNumber.toLowerCase()) ||
+            (data.grnNumber && (d.dnNumber || '').toLowerCase().includes(data.grnNumber.toLowerCase()))
+        );
 
-        setDoc(doc(db, 'dn_records', dnDocId), newDnDoc).catch((dnErr) => {
-          console.warn('Failed to auto-create DN record in dn_records collection:', dnErr);
-        });
+        if (existingMatchingDn) {
+          updateDoc(doc(db, 'dn_records', existingMatchingDn.id), {
+            dnDate: effectiveGrnDate,
+            dnQty,
+            dnReason: cleanDnReason,
+            whPocDetails: `GRN DN Deduction: ₹${dnAmount.toLocaleString('en-IN')} (Net GRN: ₹${netPayableAmount.toLocaleString('en-IN')})`.slice(0, 200),
+            updatedByUid: firebaseUser.uid,
+            updatedByName: employeeProfile.employeeName.slice(0, 100),
+            updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+            updatedAt: serverTimestamp(),
+          }).catch((dnErr) => {
+            console.warn('Failed to update matching DN record in dn_records collection:', dnErr);
+          });
+        } else {
+          const dnDocId = generateSafeId('dn_grn');
+          const newDnDoc: Omit<DnRecord, 'id'> = {
+            dnDate: effectiveGrnDate,
+            dnNumber: `DN-${cleanGrnNo}`.slice(0, 80),
+            facilityName: targetPo.warehouseName.slice(0, 120),
+            parentPoDetails: `PO: ${targetPo.poNumber} | GRN: ${data.grnNumber} | Inv: ${targetPo.invoiceNo || 'N/A'}`.slice(0, 200),
+            dnSkuIdItemName: `${targetPo.itemId} | ${targetPo.itemName}`.slice(0, 250),
+            dnQty,
+            dnReason: cleanDnReason,
+            whPocDetails: `GRN DN Deduction: ₹${dnAmount.toLocaleString('en-IN')} (Net GRN: ₹${netPayableAmount.toLocaleString('en-IN')})`.slice(0, 200),
+            lrNo: (targetPo.pickupTrackingId || targetPo.asn || 'GRN-INWARD').slice(0, 80),
+            reportFileName: `GRN_DN_${targetPo.poNumber}.pdf`.slice(0, 200),
+            reportFileType: 'application/pdf',
+            reportFileSize: 0,
+            reportFileDataUrl: '',
+            orgScope: 'instamart_ops',
+            createdByUid: firebaseUser.uid,
+            createdByName: employeeProfile.employeeName.slice(0, 100),
+            createdByEmpId: employeeProfile.employeeId.slice(0, 50),
+            updatedByUid: firebaseUser.uid,
+            updatedByName: employeeProfile.employeeName.slice(0, 100),
+            updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          };
+
+          setDoc(doc(db, 'dn_records', dnDocId), newDnDoc).catch((dnErr) => {
+            console.warn('Failed to auto-create DN record in dn_records collection:', dnErr);
+          });
+        }
       }
 
       void recordActivity(
@@ -2386,6 +2410,17 @@ export default function App() {
   const handleSaveDn = async (values: DnFormValues) => {
     if (!firebaseUser || !employeeProfile) return;
 
+    const cleanReason = (values.dnReason || '').trim().slice(0, 200);
+    const parentLower = values.parentPoDetails.toLowerCase();
+    const dnNumLower = values.dnNumber.toLowerCase();
+    const matchedPo =
+      prefillDnFromPo ||
+      purchaseOrders.find(
+        (p) =>
+          (p.poNumber && (parentLower.includes(p.poNumber.toLowerCase()) || dnNumLower.includes(p.poNumber.toLowerCase()))) ||
+          (p.grnNumber && dnNumLower.includes(p.grnNumber.toLowerCase()))
+      );
+
     if (editingDn) {
       const targetDn = editingDn;
       const dnRef = doc(db, 'dn_records', targetDn.id);
@@ -2396,6 +2431,7 @@ export default function App() {
         parentPoDetails: values.parentPoDetails.trim().slice(0, 200),
         dnSkuIdItemName: values.dnSkuIdItemName.trim().slice(0, 250),
         dnQty: Number(values.dnQty) || 0,
+        dnReason: cleanReason,
         whPocDetails: values.whPocDetails.trim().slice(0, 200),
         lrNo: values.lrNo.trim().slice(0, 80),
         reportFileName: '',
@@ -2414,6 +2450,17 @@ export default function App() {
       updateDoc(dnRef, updatePayload).catch((err) => {
         console.error('DN update notice:', err);
       });
+      if (matchedPo && cleanReason) {
+        updateDoc(doc(db, 'purchase_orders', matchedPo.id), {
+          dnReason: cleanReason,
+          updatedByUid: firebaseUser.uid,
+          updatedByName: employeeProfile.employeeName.slice(0, 100),
+          updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+          updatedAt: serverTimestamp(),
+        }).catch((err) => {
+          console.warn('PO dnReason sync notice:', err);
+        });
+      }
       void recordActivity(
         'Updated Instamart DN Record',
         'DN_TRACKER',
@@ -2429,6 +2476,7 @@ export default function App() {
         parentPoDetails: values.parentPoDetails.trim().slice(0, 200),
         dnSkuIdItemName: values.dnSkuIdItemName.trim().slice(0, 250),
         dnQty: Number(values.dnQty) || 0,
+        dnReason: cleanReason,
         whPocDetails: values.whPocDetails.trim().slice(0, 200),
         lrNo: values.lrNo.trim().slice(0, 80),
         reportFileName: '',
@@ -2452,6 +2500,17 @@ export default function App() {
       setDoc(doc(db, 'dn_records', dnId), newDnDoc).catch((err) => {
         console.error('DN create notice:', err);
       });
+      if (matchedPo && cleanReason) {
+        updateDoc(doc(db, 'purchase_orders', matchedPo.id), {
+          dnReason: cleanReason,
+          updatedByUid: firebaseUser.uid,
+          updatedByName: employeeProfile.employeeName.slice(0, 100),
+          updatedByEmpId: employeeProfile.employeeId.slice(0, 50),
+          updatedAt: serverTimestamp(),
+        }).catch((err) => {
+          console.warn('PO dnReason sync notice:', err);
+        });
+      }
       void recordActivity(
         'Created Instamart DN Record',
         'DN_TRACKER',
@@ -3004,75 +3063,42 @@ export default function App() {
     [pocContacts, searchQuery]
   );
 
-  const expiringPoCount = useMemo(
-    () =>
-      purchaseOrders.filter((po) => {
-        if (po.workflowStage === 'GRN') return false;
-        const { isExpiringSoon, isExpired } = getPoExpiryStatus(po.poExpiryDate);
-        return isExpiringSoon || isExpired;
-      }).length,
+  const allRtoOrders = useMemo(
+    () => purchaseOrders.filter((po) => isOrderRto(po)),
     [purchaseOrders]
   );
 
-  const totalDnQty = useMemo(() => {
-    // 1. Sum dnQty from all POs with DN
-    const posWithDn = purchaseOrders.filter((po) => po.hasDn && Number(po.dnQty) > 0);
-    const poDnSum = posWithDn.reduce((acc, po) => acc + Number(po.dnQty), 0);
+  const totalRtoQty = useMemo(
+    () => allRtoOrders.reduce((acc, po) => acc + (Number(po.totalQty) || 0), 0),
+    [allRtoOrders]
+  );
 
-    // 2. Sum any standalone DN records that do not belong to an already counted PO
-    const standaloneDnSum = dnRecords
-      .filter((d) => {
-        const matchingPo = purchaseOrders.find(
-          (p) =>
-            d.parentPoDetails?.toLowerCase().includes(p.poNumber.toLowerCase()) ||
-            d.dnNumber?.toLowerCase().includes(p.poNumber.toLowerCase())
-        );
-        return !matchingPo || !matchingPo.hasDn;
-      })
-      .reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0);
+  const allGrnDnOrders = useMemo(
+    () =>
+      purchaseOrders.filter(
+        (po) => po.hasDn && (po.workflowStage === 'GRN' || po.inwardStatus === 'SUCCESS')
+      ),
+    [purchaseOrders]
+  );
 
-    const total = poDnSum + standaloneDnSum;
-    if (total > 0) return total;
+  const totalDnQty = useMemo(
+    () => allGrnDnOrders.reduce((acc, po) => acc + (Number(po.dnQty) || 0), 0),
+    [allGrnDnOrders]
+  );
 
-    return dnRecords.reduce((acc, d) => acc + (Number(d.dnQty) || 0), 0);
-  }, [purchaseOrders, dnRecords]);
+  const totalDnCount = allGrnDnOrders.length;
 
-  const totalDnCount = useMemo(() => {
-    const unmatchedPosWithDn = purchaseOrders.filter((po) => {
-      const hasPoDn = Boolean(po.hasDn || (po.dnQty && po.dnQty > 0));
-      if (!hasPoDn) return false;
-      const poNumLower = (po.poNumber || '').toLowerCase().trim();
-      const grnNumLower = (po.grnNumber || '').toLowerCase().trim();
-      return !dnRecords.some((d) => {
-        const parentLower = (d.parentPoDetails || '').toLowerCase();
-        const dnNumLower = (d.dnNumber || '').toLowerCase();
-        return (
-          (poNumLower && (parentLower.includes(poNumLower) || dnNumLower.includes(poNumLower))) ||
-          (grnNumLower && dnNumLower.includes(grnNumLower))
-        );
-      });
-    });
-    return dnRecords.length + unmatchedPosWithDn.length;
-  }, [purchaseOrders, dnRecords]);
-
-  // Total accepted quantity for orders that have a DN
+  // Total accepted quantity for orders in Instamart DN Tracker
   const totalDnAcceptedQty = useMemo(() => {
-    return purchaseOrders
-      .filter(
-        (po) =>
-          po.hasDn ||
-          (po.dnQty && po.dnQty > 0) ||
-          dnRecords.some((d) => d.parentPoDetails?.toLowerCase().includes(po.poNumber.toLowerCase()))
-      )
-      .reduce((acc, po) => {
-        const dnQty = po.dnQty || 0;
-        const accepted =
-          typeof po.acceptedQty === 'number'
-            ? po.acceptedQty
-            : Math.max(0, (Number(po.totalQty) || 0) - dnQty);
-        return acc + accepted;
-      }, 0);
-  }, [purchaseOrders, dnRecords]);
+    return allGrnDnOrders.reduce((acc, po) => {
+      const dnQty = Number(po.dnQty) || 0;
+      const accepted =
+        typeof po.acceptedQty === 'number'
+          ? po.acceptedQty
+          : Math.max(0, (Number(po.totalQty) || 0) - dnQty);
+      return acc + accepted;
+    }, 0);
+  }, [allGrnDnOrders]);
 
   const activePrintTeamCount = useMemo(() => {
     return purchaseOrders.filter((po) => {
@@ -3233,9 +3259,9 @@ export default function App() {
     },
     {
       id: 'DN_TRACKER',
-      label: `Instamart DN Tracker (${dnRecords.length} DNs · ${totalDnAcceptedQty} Accepted / ${totalDnQty} DN)`,
-      shortLabel: `DN (${totalDnAcceptedQty} Acc / ${totalDnQty} DN)`,
-      badge: dnRecords.length,
+      label: `Instamart DN Tracker (${totalDnCount} DNs · ${totalDnQty} DN Qty)`,
+      shortLabel: `DN (${totalDnQty} Qty)`,
+      badge: totalDnQty,
       icon: <FileText className="w-4 h-4 shrink-0 text-rose-500" />,
     },
     {
@@ -3677,41 +3703,42 @@ export default function App() {
               </div>
             </div>
 
-            {/* Metric 4: Expired & Expiring POs (Live Warning) */}
+            {/* Metric 4: Total RTO Qty */}
             <div
-              onClick={() => setIsNotificationOpen(true)}
+              onClick={() => setActiveTab('RTO_TRACKER')}
               className={`pb-3 sm:pb-0 border-b sm:border-b-0 lg:pr-4 lg:border-r border-slate-200 dark:border-slate-800 cursor-pointer transition-colors ${
-                expiredNotifications.length > 0 ? 'hover:bg-red-500/5' : ''
+                totalRtoQty > 0 ? 'hover:bg-orange-500/5' : ''
               }`}
             >
               <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
                 <span className="flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                  <span>Expired POs</span>
+                  <RotateCcw className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                  <span>Total RTO Qty</span>
                 </span>
-                {expiredNotifications.length > 0 && (
-                  <span className="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-red-600 text-white animate-pulse">
-                    ACTION
+                {allRtoOrders.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-orange-500/15 text-orange-600 dark:text-orange-400">
+                    {allRtoOrders.length} RTOs
                   </span>
                 )}
               </div>
               <div
                 className={`text-xl sm:text-2xl font-bold font-mono tabular-nums mt-1 ${
-                  expiredNotifications.length > 0
-                    ? 'text-red-600 dark:text-red-400 font-extrabold'
+                  totalRtoQty > 0
+                    ? 'text-orange-600 dark:text-orange-400 font-extrabold'
                     : 'text-slate-700 dark:text-slate-300'
                 }`}
               >
-                {expiredNotifications.length}
+                {totalRtoQty}{' '}
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">pcs</span>
               </div>
               <div className="text-[11px] text-slate-400 mt-0.5">
-                {expiredNotifications.length > 0
-                  ? `${expiredNotifications.length} PO(s) have passed expiry date`
-                  : `${expiringPoCount} expiring soon (≤ 7 days)`}
+                {allRtoOrders.length > 0
+                  ? `Across ${allRtoOrders.length} RTO shipment(s)`
+                  : 'No RTO shipments recorded'}
               </div>
             </div>
 
-            {/* Metric 5: DN Tracker Records */}
+            {/* Metric 5: Instamart DN Tracker */}
             <div
               onClick={() => setActiveTab('DN_TRACKER')}
               className="cursor-pointer transition-colors hover:bg-rose-500/5 p-2 rounded-lg"
@@ -3724,15 +3751,15 @@ export default function App() {
               </div>
               <div className="mt-1 flex flex-wrap items-baseline gap-1.5">
                 <span className="text-xl sm:text-2xl font-black font-mono tabular-nums text-rose-600 dark:text-rose-400">
-                  {totalDnCount}
+                  {totalDnQty}
                 </span>
                 <span className="text-xs font-bold text-rose-600 dark:text-rose-400">
-                  Total DNs
+                  Total DN Qty
                 </span>
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
                 <span>Total Accepted: {totalDnAcceptedQty} pcs</span>
-                <span className="font-mono font-bold text-rose-600 dark:text-rose-400">-{totalDnQty} pcs DN</span>
+                <span className="font-mono font-bold text-rose-600 dark:text-rose-400">{totalDnCount} Total DNs</span>
               </div>
             </div>
           </div>
@@ -5921,8 +5948,13 @@ export default function App() {
                         const paymentInfo = calculatePaymentDetails(po);
                         const matchingDn = dnRecords.find((d) =>
                           d.parentPoDetails.toLowerCase().includes(po.poNumber.toLowerCase()) ||
-                          d.dnNumber.toLowerCase().includes(po.grnNumber.toLowerCase())
+                          (po.grnNumber && d.dnNumber.toLowerCase().includes(po.grnNumber.toLowerCase()))
                         );
+                        const summaryReasonMatch = (po.grnDnSummary || '').match(/\[Reason:\s*([^\]]+)\]/i);
+                        const selectedReason =
+                          (po.dnReason && po.dnReason.trim()) ||
+                          (matchingDn?.dnReason && matchingDn.dnReason.trim()) ||
+                          (summaryReasonMatch ? summaryReasonMatch[1].trim() : '');
 
                         return (
                           <tr
@@ -5979,9 +6011,17 @@ export default function App() {
                                 {formatINR(po.originalAmount || (paymentInfo.totalAmount + (po.dnAmount || 0)))}
                               </div>
                             </td>
-                            <td className="py-2.5 px-4 max-w-[220px]">
+                            <td className="py-2.5 px-4 max-w-[260px]">
+                              {selectedReason && (
+                                <div
+                                  className="mb-1 inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/20"
+                                  title={`Discrepancy / Rejection Reason: ${selectedReason}`}
+                                >
+                                  {selectedReason}
+                                </div>
+                              )}
                               <div className="truncate text-xs font-medium" title={po.grnDnSummary}>
-                                {po.grnDnSummary || 'Discrepancy noted during inward'}
+                                {po.grnDnSummary || (selectedReason ? '' : 'Discrepancy noted during inward')}
                               </div>
                               <div className="mt-0.5">
                                 <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400">

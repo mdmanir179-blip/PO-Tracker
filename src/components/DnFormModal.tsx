@@ -9,6 +9,7 @@ export interface DnFormValues {
   parentPoDetails: string;
   dnSkuIdItemName: string;
   dnQty: number;
+  dnReason: string;
   whPocDetails: string;
   lrNo: string;
   reportFileName: string;
@@ -16,6 +17,15 @@ export interface DnFormValues {
   reportFileSize: number;
   reportFileDataUrl: string;
 }
+
+const DN_REASON_OPTIONS = [
+  'Transit Damage / Broken Packaging',
+  'Physical Shortage / Item Missing at Inward',
+  'Expiry / Near Expiry Date Rejection',
+  'Quality Defect / Seal Tampered',
+  'Wrong SKU / Barcode Mismatch',
+  'Other Warehouse Discrepancy',
+];
 
 interface DnFormModalProps {
   isOpen: boolean;
@@ -35,6 +45,7 @@ const DEFAULT_DN: DnFormValues = {
   parentPoDetails: '',
   dnSkuIdItemName: '',
   dnQty: 2,
+  dnReason: 'Transit Damage / Broken Packaging',
   whPocDetails: '',
   lrNo: '',
   reportFileName: '',
@@ -59,6 +70,17 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
 
   useEffect(() => {
     if (initialDn) {
+      const matchedPoForDn = purchaseOrders.find(
+        (p) =>
+          (initialDn.parentPoDetails || '').toLowerCase().includes(p.poNumber.toLowerCase()) ||
+          (p.grnNumber && (initialDn.dnNumber || '').toLowerCase().includes(p.grnNumber.toLowerCase()))
+      );
+      const summaryMatch = (matchedPoForDn?.grnDnSummary || '').match(/\[Reason:\s*([^\]]+)\]/i);
+      const resolvedReason =
+        (initialDn.dnReason && initialDn.dnReason.trim()) ||
+        (matchedPoForDn?.dnReason && matchedPoForDn.dnReason.trim()) ||
+        (summaryMatch ? summaryMatch[1].trim() : '') ||
+        'Transit Damage / Broken Packaging';
       setValues({
         dnDate: initialDn.dnDate,
         dnNumber: initialDn.dnNumber,
@@ -66,6 +88,7 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
         parentPoDetails: initialDn.parentPoDetails,
         dnSkuIdItemName: initialDn.dnSkuIdItemName,
         dnQty: initialDn.dnQty,
+        dnReason: resolvedReason,
         whPocDetails: initialDn.whPocDetails,
         lrNo: initialDn.lrNo,
         reportFileName: initialDn.reportFileName,
@@ -79,6 +102,11 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
           c.facilityName.toLowerCase().trim() ===
           prefillFromPo.warehouseName.toLowerCase().trim()
       );
+      const summaryMatch = (prefillFromPo.grnDnSummary || '').match(/\[Reason:\s*([^\]]+)\]/i);
+      const resolvedReason =
+        (prefillFromPo.dnReason && prefillFromPo.dnReason.trim()) ||
+        (summaryMatch ? summaryMatch[1].trim() : '') ||
+        'Transit Damage / Broken Packaging';
       setValues({
         ...DEFAULT_DN,
         dnDate: new Date().toISOString().slice(0, 10),
@@ -87,6 +115,7 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
         parentPoDetails: `${prefillFromPo.poNumber} | Inv: ${prefillFromPo.invoiceNo || 'N/A'} | Stage: ${prefillFromPo.workflowStage}`,
         dnSkuIdItemName: `${prefillFromPo.itemId} | ${prefillFromPo.itemName}`,
         dnQty: typeof prefillFromPo.dnQty === 'number' && prefillFromPo.dnQty > 0 ? prefillFromPo.dnQty : 2,
+        dnReason: resolvedReason,
         lrNo: prefillFromPo.pickupTrackingId || prefillFromPo.asn || '',
         whPocDetails: matchedPoc
           ? `${matchedPoc.pocName} · ${matchedPoc.contactNumber} · ${matchedPoc.emailId}`
@@ -99,7 +128,7 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
       });
     }
     setError(null);
-  }, [initialDn, prefillFromPo, isOpen, pocContacts]);
+  }, [initialDn, prefillFromPo, isOpen, pocContacts, purchaseOrders]);
 
   if (!isOpen) return null;
 
@@ -360,6 +389,25 @@ export const DnFormModal: React.FC<DnFormModalProps> = ({
                 placeholder="e.g. LR-9081223"
                 className={`${inputClass} font-mono`}
               />
+            </div>
+
+            {/* Discrepancy / Rejection Reason */}
+            <div className="sm:col-span-2">
+              <label className={labelClass}>Discrepancy / Rejection Reason *</label>
+              <select
+                value={values.dnReason}
+                onChange={(e) => setValues({ ...values, dnReason: e.target.value })}
+                className={inputClass}
+              >
+                {!DN_REASON_OPTIONS.includes(values.dnReason) && values.dnReason && (
+                  <option value={values.dnReason}>{values.dnReason}</option>
+                )}
+                {DN_REASON_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* WH POC Name / Contact Details */}

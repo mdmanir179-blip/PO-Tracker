@@ -352,6 +352,9 @@ export async function parseExcelForDnEntries(file: File): Promise<DnFormValues[]
         row['DN SKU ID | Item Name'] ?? row['dnSkuIdItemName'] ?? row['Item Name'] ?? 'Item'
       ).trim(),
       dnQty: Number(row['DN QTY'] ?? row['dnQty'] ?? row['Qty'] ?? 0) || 0,
+      dnReason: String(
+        row['Discrepancy Reason'] ?? row['DN Reason'] ?? row['dnReason'] ?? row['Reason'] ?? ''
+      ).trim(),
       whPocDetails: String(
         row['WH POC Name / Contact Details'] ?? row['whPocDetails'] ?? ''
       ).trim(),
